@@ -1657,9 +1657,34 @@ $voices
             reply_text "$to" "❌ 需要数字。用法：/tts max <数字>"
           fi ;;
         style)
-          # Curated voice+rate presets (works on macOS `say`).
-          # Format in table: name|voice|rate|描述
-          local presets="婷婷|Tingting|180|普通话女声(柔)
+          # Curated voice+rate presets — auto-switches table by engine.
+          # say(macOS) format:    name|voice|rate|描述
+          # azure format:         name|voice[:style[:degree]]|rate-pct|描述
+          #   (rate-pct is +/- percent, e.g. -20, +30; "0" or empty = normal)
+          local presets
+          if [[ "$(tts_engine)" == "azure" ]]; then
+            presets="晓晓|zh-CN-XiaoxiaoNeural|0|普通话女声(默认神经声)
+晓晓·愉悦|zh-CN-XiaoxiaoNeural:cheerful|0|开心活泼
+晓晓·温柔|zh-CN-XiaoxiaoNeural:gentle|0|温柔安抚
+晓晓·伤心|zh-CN-XiaoxiaoNeural:sad|0|悲伤情感
+晓晓·撒娇|zh-CN-XiaoxiaoNeural:affectionate|0|嗲嗲撒娇
+晓晓·助理|zh-CN-XiaoxiaoNeural:assistant|0|专业冷静
+云希·新闻|zh-CN-YunxiNeural:newscast|0|男声新闻播报
+云希·愤怒|zh-CN-YunxiNeural:angry|0|愤怒
+云希·害怕|zh-CN-YunxiNeural:fearful|0|惊恐
+云扬·客服|zh-CN-YunyangNeural:customerservice|0|客服男声
+云健·体育|zh-CN-YunjianNeural:sports-commentary-excited|0|体育激情解说
+晓晨·儿童|zh-CN-XiaochenNeural|0|儿童语气
+小贝·港|zh-HK-HiuMaanNeural|0|粤语女声
+小臻·台|zh-TW-HsiaoChenNeural|0|台湾女声
+英文女声|en-US-JennyNeural|0|英文 Jenny
+英文男声|en-US-GuyNeural|0|英文 Guy
+日语|ja-JP-NanamiNeural|0|日语 Nanami
+韩语|ko-KR-SunHiNeural|0|韩语 SunHi
+快说|zh-CN-XiaoxiaoNeural|30|加速 30%
+慢说|zh-CN-XiaoxiaoNeural|-20|减速 20%"
+          else
+            presets="婷婷|Tingting|180|普通话女声(柔)
 小美|Meijia|180|台湾女声
 善怡|Sinji|180|粤语女声
 奶奶|Grandma (中文（中国大陆）)|160|慈祥老人
@@ -1675,6 +1700,7 @@ $voices
 日语|Kyoko|180|日语女声
 韩语|Yuna|180|韩语女声
 ASMR|Whisper|140|耳语风(英文)"
+          fi
           if [[ -z "$arg" || "$arg" == "list" || "$arg" == "ls" ]]; then
             local cur_v cur_r
             cur_v=$(tts_voice_get "$key"); cur_r=$(tts_rate_get "$key")

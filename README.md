@@ -197,6 +197,52 @@ bash bot.sh run
 启用后 `state/memory/*.txt` 自动 AES-256 加密落盘（文件后缀 `.enc`）。
 不设这个变量就跟以前一样（明文，零迁移）。
 
+### TTS 高级：Azure 神经语音（情感 / 多语言）
+
+默认 TTS 用本机 `say`（仅 macOS）或 `espeak-ng`。如果你要：
+
+- 在 **Linux** 上有高质量语音
+- 中文也想要 **情感**（开心 / 难过 / 撒娇 / 客服 / 新闻 …）
+- 不想装 GPU 模型
+
+→ 接 **Azure Cognitive Services Speech**（免费层 F0 = 50 万字/月，足够个人用）。
+
+**注册（5 分钟）：**
+
+1. 浏览器打开 <https://portal.azure.com>，登录（没账号就注册，要绑卡但 F0 不扣费）。
+2. 顶部搜 **Speech services** → 点 **创建**。
+3. 资源组随便建一个；**定价层** 一定要选 **Free F0**；区域选离你近的（`eastasia` / `japaneast` / `eastus`）。
+4. 创建完 → 进资源 → 左侧菜单「**密钥和终结点**」→ 复制 **KEY 1** 和 **位置/区域**（如 `eastus`）。
+
+**配置：**
+
+```bash
+cd ~/Projects/mini_bot
+cp .env.example .env
+# 编辑 .env，填进去：
+#   AZURE_SPEECH_KEY=你刚复制的key
+#   AZURE_SPEECH_REGION=eastus
+./scripts/stop.sh && nohup ./scripts/watchdog.sh >/dev/null 2>&1 & disown
+```
+
+**验证：**
+
+聊天里发 `/tts engine` → 应当显示 `azure`。
+发 `/tts on`，再发 `/tts style 晓晓·愉悦`，再发任一句话，bot 回复的同时会发一条带情感的语音。
+
+**voice 格式：** `<voice-name>[:style[:degree]]`，例：
+
+| 用法 | 效果 |
+|---|---|
+| `/tts voice zh-CN-XiaoxiaoNeural` | 晓晓（默认女声） |
+| `/tts voice zh-CN-XiaoxiaoNeural:cheerful` | 晓晓开心版 |
+| `/tts voice zh-CN-XiaoxiaoNeural:sad:2` | 晓晓难过（强度 2，最大 2） |
+| `/tts voice en-US-JennyNeural` | 英文 Jenny |
+
+所有可用 voice + style 见 <https://learn.microsoft.com/azure/ai-services/speech-service/language-support>。
+
+发 `/tts style list` 看 mini_bot 内置的中文预设（共 20 个）。
+
 ### Prometheus + Grafana
 
 `web.py` 自带 `/metrics`（不鉴权）。Grafana 仪表盘 JSON 在 `dashboards/minibot-grafana.json`，Import 即可。
