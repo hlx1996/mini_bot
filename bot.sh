@@ -258,6 +258,87 @@ run_with_heartbeat() {
   rm -f "$out_file"
 }
 
+# run_with_streaming <to> <key> <workspace> <model> <prompt> [attachments...]
+# Like run_with_heartbeat but sends LIVE progress messages (tool calls, thinking)
+# while qoder works. Returns the final assistant text on stdout.
+run_with_streaming() {
+  local to="$1" key="$2" workspace="$3" model="$4" prompt="$5"
+  shift 5
+  local attachments=( "$@" )
+
+  local session_uuid started_marker sys_prompt
+  session_uuid=$(get_session_uuid "$key")
+  session_uuid="${session_uuid//[$'\n\r\t ']/}"
+  started_marker="$SESS_DIR/$key.started"
+  sys_prompt=$(build_system_prompt "$key")
+
+  local args=(
+    -p "$prompt"
+    -m "$model"
+    --cwd "$workspace"
+    --reasoning-effort high
+    --permission-mode bypass_permissions
+    --append-system-prompt "$sys_prompt"
+    --max-output-tokens 4000
+    --output-format stream-json
+  )
+  [[ -f "$MCP_CONFIG" ]] && args+=( --mcp-config "$MCP_CONFIG" )
+  for a in ${attachments[@]+"${attachments[@]}"}; do
+    args+=( --attachment "$a" )
+  done
+  if [[ -f "$started_marker" ]]; then
+    args+=( --resume "$session_uuid" )
+    log "qoder STREAM RESUME uuid=$session_uuid model=$model attachments=${#attachments[@]}"
+  else
+    args+=( --session-id "$session_uuid" )
+    log "qoder STREAM NEW uuid=$session_uuid model=$model attachments=${#attachments[@]}"
+  fi
+
+  local out_file fifo lock_file parser
+  out_file=$(mktemp -t qoder.XXXXXX)
+  fifo=$(mktemp -u -t qprog.XXXXXX)
+  mkfifo "$fifo"
+  lock_file="$SESS_DIR/$key.lock"
+  parser="$SCRIPT_DIR/lib/stream_parser.py"
+
+  # progress reader (fd 3 of qoder pipeline writes here; we read & forward)
+  ( while IFS= read -r progress_line; do
+      [[ -z "$progress_line" ]] && continue
+      reply_text "$to" "$progress_line" >/dev/null 2>&1 || true
+    done < "$fifo" ) &
+  local prog_reader=$!
+
+  ( "$QODER_BIN" "${args[@]}" 2>>"$LOG_DIR/qoder.err" \
+      | "$PYTHON_BIN" "$parser" 3>"$fifo" >"$out_file" ) &
+  local qpid=$!
+  echo "$qpid" > "$lock_file"
+
+  local elapsed=0
+  while kill -0 "$qpid" 2>/dev/null; do
+    sleep 5
+    elapsed=$((elapsed+5))
+    if (( elapsed > 600 )); then
+      log "qoder STREAM timed out, killing pid $qpid"
+      kill "$qpid" 2>/dev/null
+      sleep 1; kill -9 "$qpid" 2>/dev/null
+      break
+    fi
+  done
+  wait "$qpid" 2>/dev/null
+  local rc=$?
+  rm -f "$lock_file"
+  # The qoder|parser subshell, when it exits, closes its fd 3 (the only writer
+  # of the fifo); the reader then sees EOF and exits naturally. Do NOT open the
+  # fifo here for "defensive close" — it would block forever since no reader
+  # remains.
+  wait "$prog_reader" 2>/dev/null
+  rm -f "$fifo"
+
+  [[ $rc -eq 0 ]] && touch "$started_marker"
+  cat "$out_file"
+  rm -f "$out_file"
+}
+
 ###############################################################################
 # Event parsing
 ###############################################################################
@@ -836,41 +917,26 @@ PY
 
 # ---------- URL-fetch shortcut ----------
 # url_fetch_inject "<message>"  — echoes "[Web page]:\n..." or empty.
+# Uses lib/url_fetch.py (real file, not heredoc — avoids the bash fork-chain
+# gremlin where heredoc fd contents can be served stale to python).
 url_fetch_inject() {
   local msg="$1"
   [[ "$msg" =~ https?:// ]] || return 1
   command -v curl >/dev/null 2>&1 || return 1
-  "$PYTHON_BIN" <(cat <<'PY'
-import sys, re, subprocess, html
-APO = chr(39)
-text = sys.stdin.read()
-# Stop URL at whitespace, CJK, and common punctuation/quotes.
-stop = "\\s\u4e00-\u9fff，。、！？；：)\\]}<>\"" + APO + "\\\\"
-urls = re.findall(r"https?://[^" + stop + r"]+", text)
-urls = urls[:3]  # cap
-if not urls: sys.exit(0)
-out = ["[Web page] (fetched live):"]
-for u in urls:
-    try:
-        r = subprocess.run(["curl","-sL","--max-time","12",
-                            "-A","Mozilla/5.0 mini_bot/1.0", u],
-                           capture_output=True, timeout=15)
-        body = r.stdout.decode("utf-8", "ignore")
-    except Exception as e:
-        out.append("--- " + u + " ---\n(fetch failed: " + str(e) + ")")
-        continue
-    body = re.sub(r"(?is)<script.*?</script>", " ", body)
-    body = re.sub(r"(?is)<style.*?</style>", " ", body)
-    body = re.sub(r"(?s)<[^>]+>", " ", body)
-    body = html.unescape(body)
-    body = re.sub(r"[ \t]+", " ", body)
-    body = re.sub(r"\n\s*\n+", "\n\n", body).strip()
-    if len(body) > 2500: body = body[:2500] + "...[truncated]"
-    out.append("--- " + u + " ---\n" + body)
-print("\n".join(out))
-PY
-) <<<"$msg"
+  local script="$SCRIPT_DIR/lib/url_fetch.py"
+  [[ -f "$script" ]] || return 1
+  "$PYTHON_BIN" "$script" <<<"$msg"
 }
+
+# ---------- /url — toggle URL auto-fetch ----------
+url_on()    { rm -f "$SESS_DIR/$1.url_off"; }
+url_off()   { mkdir -p "$SESS_DIR"; : > "$SESS_DIR/$1.url_off"; }
+url_is_on() { [[ ! -f "$SESS_DIR/$1.url_off" ]]; }   # default: ON
+
+# ---------- /stream — toggle streaming reply (progress messages) ----------
+stream_on()    { mkdir -p "$SESS_DIR"; : > "$SESS_DIR/$1.stream"; }
+stream_off()   { rm -f "$SESS_DIR/$1.stream"; }
+stream_is_on() { [[ -f "$SESS_DIR/$1.stream" ]]; }   # default: OFF (opt-in)
 
 # ---------- /cwd local-project workspace ----------
 cwd_set()   { local key="$1" path="$2"; mkdir -p "$SESS_DIR"; printf '%s' "$path" > "$SESS_DIR/$key.cwd"; }
@@ -969,10 +1035,14 @@ handle_command() {
 — Web / search —
   /search <q>                  web search + qoder synthesis
   /news <q>                    raw search hits
+  /url on|off                  auto-fetch URLs in your message (default on)
 
 — Multimodal generation —
   /image [n=N] [style=…] <prompt>
   /tts on|off|engine|voice [name|-]|rate [n|-]
+
+— Streaming —
+  /stream on|off               live-push 🤔/🔧 progress while qoder works (default off)
 
 — Knowledge (RAG) —
   /rag list|on|off|add <name> <text>|rm <name>
@@ -1055,10 +1125,14 @@ Send any text / image / voice / video / file directly — multi-turn context is 
 — 联网搜索 —
   /search <关键词>             联网搜索 + qoder 综合回答
   /news <关键词>               直接返回搜索摘要列表
+  /url on|off                  消息含网址时自动抓正文喂给模型（默认 on）
 
 — 多模态生成 —
   /image [n=N] [style=…] <提示词>  AI 生成图片（多张/风格）
   /tts on|off|engine|voice [name|-]|rate [n|-]    语音回复（音色/语速）
+
+— 流式回复 —
+  /stream on|off               实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off）
 
 — 知识库 (RAG) —
   /rag list|on|off
@@ -1227,6 +1301,25 @@ example：/team set researcher critic editor"
         off|关) automem_off "$key"; reply_text "$to" "已关闭自动记忆" ;;
         *)      reply_text "$to" "自动记忆：$(automem_is_on "$key" && echo on || echo off)
 用法：/automem on | off" ;;
+      esac
+      return 0 ;;
+
+    /url|/网址)
+      case "$rest" in
+        on|开)  url_on  "$key"; reply_text "$to" "🌐 网址自动抓取已开启：消息含链接时自动抓正文喂给模型" ;;
+        off|关) url_off "$key"; reply_text "$to" "已关闭网址自动抓取" ;;
+        *)      reply_text "$to" "网址自动抓取：$(url_is_on "$key" && echo on || echo off)（默认 on）
+用法：/url on | off" ;;
+      esac
+      return 0 ;;
+
+    /stream|/流式)
+      case "$rest" in
+        on|开)  stream_on  "$key"; reply_text "$to" "📡 流式回复已开启：会实时推送『思考中/调用工具』等进度。" ;;
+        off|关) stream_off "$key"; reply_text "$to" "已关闭流式回复（恢复为一次性发送）" ;;
+        *)      reply_text "$to" "流式回复：$(stream_is_on "$key" && echo on || echo off)（默认 off）
+用法：/stream on | off
+开启后每次回答会先收到 🤔 思考中 / 🔧 工具进度，最后才是答案。" ;;
       esac
       return 0 ;;
 
@@ -2243,8 +2336,9 @@ handle_event() {
 
   # URL-question shortcut: if the message contains http(s):// URLs, fetch each
   # (HTML stripped to text, capped) and prepend as [Web page] context.
+  # Disabled per-key via /url off.
   local url_ctx
-  if url_ctx=$(url_fetch_inject "$prompt"); then
+  if url_is_on "$key" && url_ctx=$(url_fetch_inject "$prompt"); then
     if [[ -n "$url_ctx" ]]; then
       prompt="$url_ctx
 
@@ -2279,8 +2373,13 @@ $hook_out"
   fi
 
   local answer
-  answer=$(run_with_heartbeat "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
-            ${attachments[@]+"${attachments[@]}"})
+  if stream_is_on "$key"; then
+    answer=$(run_with_streaming "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
+              ${attachments[@]+"${attachments[@]}"})
+  else
+    answer=$(run_with_heartbeat "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
+              ${attachments[@]+"${attachments[@]}"})
+  fi
 
   log "qoder returned ${#answer} chars"
   [[ -z "$answer" ]] && answer="(qodercli 没有返回内容，详见 $LOG_DIR/qoder.err)"
