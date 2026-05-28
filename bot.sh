@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh telegram.sh agents.sh tts.sh crypt.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -147,9 +147,6 @@ reply_text() {
     lark|feishu)
       lark_reply_text "$to" "$text" || ok=false
       ;;
-    telegram)
-      tg_reply_text "$to" "$text" >/dev/null || ok=false
-      ;;
     *)
       local out
       out=$(wxlink send-text --to "$to" --text "$text" 2>>"$LOG_DIR/reply.err") || ok=false
@@ -173,10 +170,6 @@ reply_media() {
     lark|feishu)
       lark_reply_media "$to" "$file"
       [[ -n "$caption" ]] && lark_reply_text "$to" "$caption" || true
-      ;;
-    telegram)
-      tg_reply_media "$to" "$file" >/dev/null
-      [[ -n "$caption" ]] && tg_reply_text "$to" "$caption" >/dev/null || true
       ;;
     *)
       wxlink send-media --to "$to" --file "$file" ${caption:+--caption "$caption"} \
@@ -2423,19 +2416,6 @@ main() {
                 handle_event "$ev" &
               done
             log "lark subscribe[$acct] exited; restarting in 3s..."
-            sleep 3
-          done
-        ) &
-        ;;
-      telegram|tg)
-        (
-          while true; do
-            tg_subscribe_loop "$acct" \
-              2>>"$LOG_DIR/telegram-$acct.err" \
-            | while IFS= read -r ev; do
-                handle_event "$ev" &
-              done
-            log "telegram subscribe[$acct] exited; restarting in 3s..."
             sleep 3
           done
         ) &

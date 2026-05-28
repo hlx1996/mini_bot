@@ -1,253 +1,213 @@
 # mini_bot
 
-> A multi-platform chat bot written as a single bash script (`bot.sh`) plus a small Python web panel.
-> Plugs into WeChat / Lark (Feishu) / Telegram on the front; into any CLI LLM (qoder-cli, Claude Code, Codex CLI, …) on the back.
+> A bash chat bot.
+> Plug your **WeChat** or **Lark (Feishu)** account into a CLI LLM (default `qoder-cli`); users chat in IM, the bot replies.
 >
-> 中文文档见 [README.md](./README.md)。
+> 中文：[README.md](./README.md)
 
 ---
 
-## 1. One-liner
+## 0. What it does
 
-Let one bash process sit on multiple IM platforms at once; users send text / images / video / audio / files; the bot routes through an LLM and replies. Built-in: cron jobs, sub-agents, TTS, web dashboard, encrypted backups, Prometheus.
+- You send a message in WeChat/Lark → bot calls qoder-cli → you get an AI reply.
+- Context auto-continues. `/reset` starts a new conversation.
+- Accepts text, images, video, audio, files as input.
+- Bonus built-in: cron reminders, long-term memory, image gen, TTS, web search, multi-account, auto backups.
+- Tiny web dashboard for messages, usage, backup downloads.
 
 ---
 
-## 2. Quickstart
+## 1. Three-minute start (WeChat only)
 
 ```bash
-git clone git@github.com:hlx1996/mini_bot.git ~/mini_bot && cd ~/mini_bot
+# 1) clone
+git clone git@github.com:hlx1996/mini_bot.git ~/mini_bot
+cd ~/mini_bot
 
-cat > ~/wxbot-state/accounts.list <<'EOF'
-wechat:work
-lark:lark_main      assistant   qoder-cli
-telegram:tg_main    cat         qoder-cli
-EOF
+# 2) install wxlink (WeChat bridge), log in once
+pip install --user wechat-clawbot
+python3 -m wxlink login          # scan QR with your phone
 
+# 3) configure account and run
+mkdir -p ~/wxbot-state
+echo "wechat:default" > ~/wxbot-state/accounts.list
 bash bot.sh run
 ```
 
-Web UI: `http://127.0.0.1:8088`.
+Done. Open WeChat → message "File Transfer" → you'll get a reply.
+
+> Want a second WeChat account? `python3 -m wxlink login --account work`, then add `wechat:work` to `accounts.list`.
 
 ---
 
-## 3. Architecture
+## 2. Add Lark / Feishu (5 steps)
 
+```bash
+# 1) install lark-cli
+npm install -g @larksuiteoapi/lark-cli
+lark-cli auth login              # browser QR
+
+# 2) Create a "self-built app" on Lark open platform, get App ID/Secret
+#    https://open.feishu.cn/app
+#    Enable the Bot capability and subscribe event: im.message.receive_v1
+
+# 3) Export creds (put in ~/.zshrc or ~/.bashrc)
+export LARK_APP_ID=cli_xxxxxxxxxxxxxxxx
+export LARK_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
+
+# 4) Add an account line
+echo "lark:default" >> ~/wxbot-state/accounts.list
+
+# 5) Restart
+bash bot.sh run
 ```
-accounts.list
-   │
-   ▼
-wxlink (WeChat) │ lark.sh (Lark SDK) │ telegram.sh (Bot API long-poll)
-   │                  │                          │
-   └────── NDJSON event stream (unified schema) ─┘
-                      ▼
-            bot.sh handle_event
-              ├ intent routing
-              ├ /command dispatch
-              ├ multi-agent pipelines
-              ├ auto-memory + RAG
-              └ exec qoder-cli (or any LLM)
-                      ▼
-        reply(text / image / audio / video)
-                      ▼
-            events.jsonl  ──►  web.py + /metrics
+
+Then `@your-bot` in any Lark chat (or DM it).
+
+---
+
+## 3. Common commands (send in chat)
+
+| Command | Effect |
+|---|---|
+| `/reset` | Clear context, start fresh |
+| `/help` | Full command list |
+| `/lang zh` | Switch to Chinese (`/lang en` to switch back) |
+| `/soul cat` | Switch persona (`assistant` / `cat` / `editor` …) |
+| `/model claude` | Switch backend LLM |
+| `/search latest news` | Web search |
+| `/image a cyberpunk cat` | Generate image |
+| `/tts hello world` | Text to speech |
+| `/cron add "0 9 * * *" Good morning` | Daily reminder |
+| `/remember my birthday is May 1` | Long-term memory |
+| `/memory` | Show what's remembered |
+| `/forget` | Clear memory |
+| `/backup` | Snapshot now |
+| `/usage day` | Today's usage stats |
+
+Send `/help` for the full list.
+
+---
+
+## 4. Web dashboard (optional)
+
+```bash
+python3 web.py --port 8088
+```
+
+Open `http://127.0.0.1:8088` for the event stream, usage, backups.
+
+Want a password?
+
+```bash
+export MINIBOT_USER=admin
+export MINIBOT_PASS=secret
+python3 web.py --port 8088
 ```
 
 ---
 
-## 4. Layout
+## 5. A few advanced toggles
+
+### Encrypt conversation + memory at rest
+
+```bash
+export MINIBOT_ENCRYPT_KEY="some-passphrase"
+bash bot.sh run
+```
+
+Memory files on disk are AES-256 encrypted (`.enc` suffix). Unset the var to revert to plain files (zero migration).
+
+### Prometheus + Grafana
+
+`web.py` exposes `/metrics` (unauthenticated). Import `dashboards/minibot-grafana.json` into Grafana.
+
+### Docker
+
+```bash
+docker build -t mini_bot .
+docker run -d --name mini_bot -p 8088:8088 \
+  -v ~/wxbot-state:/data -e BOT_HOME=/data \
+  mini_bot
+```
+
+---
+
+## 6. Where everything lives
+
+Code:
 
 ```
 mini_bot/
-├── bot.sh                # main loop, command dispatch
-├── web.py                # dashboard + /metrics
-├── live-smoke.sh         # 29 end-to-end tests
-├── backup.sh             # export / import
-├── lib/
-│   ├── lark.sh           # Lark subscribe / reply / cards
-│   ├── telegram.sh       # Telegram long-poll / reply / file download
-│   ├── agents.sh         # sub-agents, team pipelines
-│   ├── tts.sh            # TTS (say / espeak-ng)
-│   └── crypt.sh          # AES-256-CBC at-rest encryption
-├── dashboards/
-│   └── minibot-grafana.json
-├── Dockerfile
-└── .github/workflows/ci.yml
+├── bot.sh         # main loop
+├── web.py         # dashboard
+├── live-smoke.sh  # 28-test suite
+├── backup.sh      # export/import
+└── lib/
+    ├── lark.sh
+    ├── agents.sh
+    ├── tts.sh
+    └── crypt.sh
 ```
 
-Runtime state lives in `$BOT_HOME` (default `~/wxbot-state`): `sessions/`, `memory/`, `crons/`, `downloads/`, `backups/`, `logs/events.jsonl`, `cmdq/`.
+Data (default `~/wxbot-state/`):
+
+```
+~/wxbot-state/
+├── accounts.list
+├── sessions/
+├── memory/
+├── crons/
+├── downloads/
+├── backups/
+└── logs/
+```
 
 ---
 
-## 5. accounts.list
+## 7. accounts.list format
+
+One line per account:
 
 ```
 <platform>:<name>   [soul]   [model]
 ```
 
-- `platform`: `wechat | wx | lark | feishu | telegram | tg`
-- `soul`: persona preset (`assistant`, `cat`, `editor`, …)
-- `model`: backend CLI (`qoder-cli`, `claude`, `codex`, …)
-
 Example:
 
 ```
-wechat:work
-wechat:private    cat        qoder-cli
-lark:lark_main    assistant  qoder-cli
-telegram:tg_main  editor     codex
+wechat:default
+wechat:work          assistant   qoder-cli
+lark:lark_main       cat         qoder-cli
 ```
+
+`platform`: `wechat` or `lark`. `soul` / `model` optional.
 
 ---
 
-## 6. Env vars
+## 8. Env vars
 
 | Var | Purpose |
 |---|---|
-| `BOT_HOME` | Runtime data dir (default `~/wxbot-state`) |
+| `BOT_HOME` | Data dir (default `~/wxbot-state`) |
 | `MINIBOT_MODEL` | Default LLM command (default `qoder-cli`) |
-| `MINIBOT_USER` / `MINIBOT_PASS` | Web Basic Auth |
-| `MINIBOT_GH_CLIENT_ID/SECRET` | Enable GitHub OAuth on web panel |
-| `MINIBOT_GH_ALLOWED_USERS` | OAuth allowlist (comma-separated) |
-| `MINIBOT_ENCRYPT_KEY` | Enable at-rest AES encryption for sessions/memory |
-| `LARK_APP_ID` / `LARK_APP_SECRET` | Lark self-built app creds |
-| `TELEGRAM_BOT_TOKEN` | Telegram Bot token (global default) |
-| `TELEGRAM_BOT_TOKEN_<NAME>` | Per-account token (overrides global) |
-| `MINIBOT_OAUTH_MOCK=1` | Skip real OAuth (tests) |
+| `MINIBOT_USER` / `MINIBOT_PASS` | Dashboard Basic Auth |
+| `MINIBOT_ENCRYPT_KEY` | Enable at-rest encryption |
+| `LARK_APP_ID` / `LARK_APP_SECRET` | Lark app creds |
+| `MINIBOT_GH_CLIENT_ID` / `MINIBOT_GH_CLIENT_SECRET` / `MINIBOT_GH_ALLOWED_USERS` | GitHub OAuth for dashboard |
 
 ---
 
-## 7. Commands cheat sheet
-
-| Command | Effect |
-|---|---|
-| `/reset` | Clear current conversation |
-| `/help` | Help (use `/lang en` for English) |
-| `/lang zh\|en` | Switch reply language |
-| `/soul <name>` | Switch persona |
-| `/model <cmd>` | Switch backend LLM |
-| `/auto on\|off` | Toggle natural-language intent routing |
-| `/search <query>` | DuckDuckGo + summary |
-| `/image <prompt>` | Generate image (`n=3 style=cyberpunk ...`) |
-| `/tts <text>` | Text-to-speech |
-| `/tts voice <n>` / `/tts rate <n>` | Voice / rate |
-| `/cron add "<expr>" <text>` | Schedule task |
-| `/cron list` / `/cron rm <id>` | Manage tasks |
-| `/remember <fact>` / `/memory` / `/forget` | Long-term memory |
-| `/automem on\|off` | Auto-extract facts from chat |
-| `/agent <name> <task>` | Sub-agent single shot |
-| `/team set <a,b,c>` / `/team run <task>` | Multi-agent pipeline |
-| `/rag add <name> <text>` / `/rag list` / `/rag rm` / `/rag on\|off` | Private knowledge base |
-| `/card <title> <body>` | Lark card |
-| `/backup` | Snapshot now |
-| `/usage day\|week\|all` | Usage stats |
-
----
-
-## 8. Transports
-
-### 8.1 WeChat
-Requires [`wxlink`](https://github.com/hlx1996/wxlink) (macOS only). Add `wechat:<name>` to `accounts.list` and matching wxlink account is auto-subscribed.
-
-### 8.2 Lark / Feishu
-1. Create a self-built app, get `App ID / Secret`.
-2. Enable bot + subscribe `im.message.receive_v1`.
-3. `export LARK_APP_ID=... LARK_APP_SECRET=...`
-4. Add `lark:<name>` to `accounts.list`. `@bot` in group triggers reply; cards via `/card`.
-
-### 8.3 Telegram
-1. Create a bot with `@BotFather`, copy the token.
-2. `export TELEGRAM_BOT_TOKEN=123:ABC...` (or `TELEGRAM_BOT_TOKEN_TG_MAIN=...`).
-3. Add `telegram:tg_main` to `accounts.list`. Long-poll `getUpdates`; full text/photo/voice/video/document support.
-
----
-
-## 9. Web panel
+## 9. Tests / CI
 
 ```bash
-python3 web.py --port 8088 --host 127.0.0.1
+bash live-smoke.sh    # expect PASS: 28  FAIL: 0
 ```
 
-Three auth tiers (in priority order):
-
-1. **GitHub OAuth** — auto-on if `MINIBOT_GH_CLIENT_ID/SECRET` set; optional `MINIBOT_GH_ALLOWED_USERS` allowlist.
-2. **Basic Auth** — on if `MINIBOT_USER/MINIBOT_PASS` set.
-3. **Open** — neither set → LAN open.
-
-Endpoints: `/`, `/api/{status,sessions,events,usage,accounts,crons,backups,log}`, `/download/backup/<name>`, `/login`, `/logout`, `/oauth/callback`, and unauthenticated `/metrics` (Prometheus).
+GitHub Actions: `.github/workflows/ci.yml`.
 
 ---
 
-## 10. At-rest encryption
-
-```bash
-export MINIBOT_ENCRYPT_KEY="some-long-passphrase"
-bash bot.sh run
-```
-
-When set, `sessions/<key>.uuid` and `memory/<key>.txt` are written via
-`openssl enc -aes-256-cbc -pbkdf2 -pass env:MINIBOT_ENCRYPT_KEY` (`.enc` suffix).
-When unset, behavior is identical to the pre-encryption build (zero migration).
-
----
-
-## 11. Prometheus + Grafana
-
-`/metrics` exposes:
-
-```
-minibot_events_total{platform,kind}    counter
-minibot_replies_total{platform,ok}     counter
-minibot_chars_total{dir}               counter
-minibot_active_chats                   gauge
-minibot_backups_count                  gauge
-```
-
-Prometheus scrape:
-
-```yaml
-scrape_configs:
-  - job_name: minibot
-    static_configs:
-      - targets: ['localhost:8088']
-```
-
-Grafana dashboard JSON: `dashboards/minibot-grafana.json` — Import as-is.
-
----
-
-## 12. Backup / restore
-
-- `/backup` or `bash backup.sh export` → `backups/mini_bot-all-<ts>.tar.gz`.
-- `bash backup.sh import <file.tar.gz>` to restore.
-- Dashboard provides download links; cron a weekly snapshot if you like.
-
----
-
-## 13. Docker
-
-```bash
-docker build -t mini_bot .
-docker run -d --name mini_bot \
-  -v ~/wxbot-state:/data -e BOT_HOME=/data \
-  -e TELEGRAM_BOT_TOKEN=... \
-  -p 8088:8088 mini_bot
-```
-
-Image is `debian:stable-slim` with `bash jq curl openssl python3 espeak-ng`.
-
----
-
-## 14. CI / smoke tests
-
-```bash
-bash live-smoke.sh    # 29 tests, expect PASS: 29  FAIL: 0
-```
-
-GitHub Actions in `.github/workflows/ci.yml` runs `live-smoke.sh` + `docker build` on every push / PR.
-
----
-
-## 15. License
+## 10. License
 
 MIT
