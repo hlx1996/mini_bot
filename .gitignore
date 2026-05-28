@@ -1,0 +1,25 @@
+# State (runtime data)
+state/
+**/state/
+
+# Backups
+backups/
+*.tar.gz
+
+# Logs
+*.log
+*.err
+*.out
+*.jsonl
+
+# Caches & temp
+*.pyc
+__pycache__/
+.DS_Store
+*.tmp
+*.bak
+*.bak.refactor
+
+# Credentials
+.env
+*.token

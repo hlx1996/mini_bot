@@ -1,0 +1,40 @@
+version: "3.9"
+
+# mini_bot 容器化运行示例。
+# 注意 qoder / wxlink / lark-cli 都是外部二进制，请通过 volumes 映射进容器。
+
+services:
+  bot:
+    build: .
+    image: minibot:latest
+    container_name: minibot
+    restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
+      # Web 面板鉴权（留空则关闭鉴权）
+      MINIBOT_USER: "admin"
+      MINIBOT_PASS: "changeme"
+    volumes:
+      - ./state:/app/state                              # 数据持久化
+      # 把宿主机里的 qoder / wxlink / lark-cli 映射进容器（按需开启）
+      # - /usr/local/bin/qoder:/usr/local/bin/qoder:ro
+      # - /usr/local/bin/wxlink:/usr/local/bin/wxlink:ro
+      # - /usr/local/bin/lark-cli:/usr/local/bin/lark-cli:ro
+    ports:
+      - "8787:8787"
+    command: ["bash", "/app/bot.sh", "run"]
+
+  web:
+    image: minibot:latest
+    container_name: minibot-web
+    restart: unless-stopped
+    depends_on: [bot]
+    environment:
+      TZ: Asia/Shanghai
+      MINIBOT_USER: "admin"
+      MINIBOT_PASS: "changeme"
+    volumes:
+      - ./state:/app/state
+    ports:
+      - "8788:8787"
+    command: ["python3", "/app/web.py"]
