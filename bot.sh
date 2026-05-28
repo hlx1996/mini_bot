@@ -1037,8 +1037,7 @@ handle_command() {
 
 — Multimodal generation —
   /image [n=N] [style=…] <prompt>
-  /tts on|off|engine|voice [name|-]|rate [n|-]
-
+  /tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]
 — Streaming —
   /stream on|off               live-push 🤔/🔧 progress while qoder works (default off)
 
@@ -1132,7 +1131,7 @@ Send any text / image / voice / video / file directly — multi-turn context is 
 
 — 多模态生成 —
   /image [n=N] [style=…] <提示词>  AI 生成图片（多张/风格）
-  /tts on|off|engine|voice [name|-]|rate [n|-]    语音回复（音色/语速）
+  /tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]    语音回复（音色/语速/仅语音/字数上限）
 
 — 流式回复 —
   /stream on|off               实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off）
@@ -1636,7 +1635,28 @@ $voices
             tts_rate_set "$key" "$arg"
             reply_text "$to" "✅ 语速设为 $arg"
           fi ;;
-        *)       reply_text "$to" "用法：/tts on|off|engine|voice [name|-]|rate [n|-]" ;;
+        only)
+          case "$arg" in
+            on|开|"")  : > "$SESS_DIR/$key.tts_only"
+                       reply_text "$to" "🎙️ 仅语音模式已开启：bot 回复只发语音，不发文字（超过 max 字数时仍走文字）" ;;
+            off|关)    rm -f "$SESS_DIR/$key.tts_only"
+                       reply_text "$to" "📝 已恢复文字+语音双发" ;;
+            *)         reply_text "$to" "用法：/tts only on|off  （当前：$([[ -f "$SESS_DIR/$key.tts_only" ]] && echo on || echo off)）" ;;
+          esac ;;
+        max)
+          if [[ -z "$arg" ]]; then
+            reply_text "$to" "当前 TTS 最大字数：$(cat "$SESS_DIR/$key.tts_max" 2>/dev/null || echo 800)（超过则跳过语音/退回文字）
+用法：/tts max <数字>   /tts max -   （-=恢复默认 800）"
+          elif [[ "$arg" == "-" ]]; then
+            rm -f "$SESS_DIR/$key.tts_max"
+            reply_text "$to" "✅ 已恢复默认 800 字"
+          elif [[ "$arg" =~ ^[0-9]+$ ]]; then
+            printf '%s' "$arg" > "$SESS_DIR/$key.tts_max"
+            reply_text "$to" "✅ TTS 最大字数设为 $arg"
+          else
+            reply_text "$to" "❌ 需要数字。用法：/tts max <数字>"
+          fi ;;
+        *)       reply_text "$to" "用法：/tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]" ;;
       esac
       return 0 ;;
 
@@ -2637,7 +2657,12 @@ $hook_out"
 
   log "qoder returned ${#answer} chars"
   [[ -z "$answer" ]] && answer="(qodercli 没有返回内容，详见 $LOG_DIR/qoder.err)"
-  reply_text "$G_REPLY_TO" "$answer"
+  # In TTS-only mode, skip the text reply (audio is sent below).
+  if tts_is_on "$key" && [[ -f "$SESS_DIR/$key.tts_only" ]] && (( ${#answer} <= $(cat "$SESS_DIR/$key.tts_max" 2>/dev/null || echo 800) )); then
+    : # text suppressed; audio still sent below
+  else
+    reply_text "$G_REPLY_TO" "$answer"
+  fi
 
   # Coarse cost tracking (chars/3.5 ≈ tokens). See /cost command.
   command -v cost_log >/dev/null 2>&1 && cost_log "$key" "$model" "${#prompt}" "${#answer}" || true
@@ -2653,12 +2678,20 @@ $hook_out"
 
   # Optional TTS: synthesize the reply and send as voice message
   if tts_is_on "$key"; then
-    local audio
-    if audio=$(tts_synthesize "$answer" "$TTS_DIR/reply-$key-$(date +%s)" "$key"); then
-      reply_media "$G_REPLY_TO" "$audio"
-      log "TTS sent $audio"
+    local _tts_max _tts_only
+    _tts_max=$(cat "$SESS_DIR/$key.tts_max" 2>/dev/null || echo 800)
+    [[ "$_tts_max" =~ ^[0-9]+$ ]] || _tts_max=800
+    _tts_only=$([[ -f "$SESS_DIR/$key.tts_only" ]] && echo 1 || echo 0)
+    if (( ${#answer} > _tts_max )); then
+      log "TTS skipped: reply ${#answer} > max $_tts_max chars"
     else
-      log "TTS failed (engine=$(tts_engine))"
+      local audio
+      if audio=$(tts_synthesize "$answer" "$TTS_DIR/reply-$key-$(date +%s)" "$key"); then
+        reply_media "$G_REPLY_TO" "$audio"
+        log "TTS sent $audio (only=$_tts_only)"
+      else
+        log "TTS failed (engine=$(tts_engine))"
+      fi
     fi
   fi
 }
