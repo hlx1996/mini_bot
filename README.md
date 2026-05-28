@@ -91,6 +91,7 @@ bash bot.sh run
 | `/bridge 老王 老李` | 双向桥接两人：消息互相转发，包括图片/文件 |
 | `/broadcast 老王,老李,产品群 周会改到 3 点` | 群发到多个昵称 |
 | `/digest now 24` | 立即总结本会话最近 24h；`/digest add "0 9 * * *"` 每日定时 |
+| `/bg <慢问题>` | 后台思考：立即回 🤔，跑完再把结果推回来；`/bg list`、`/bg cancel <id>` |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
