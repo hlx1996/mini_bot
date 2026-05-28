@@ -56,7 +56,7 @@ TTS_DIR="$BOT_HOME/tts"                 # cached tts audio
 IMAGE_DIR="$BOT_HOME/images"            # cached generated images
 CMDQ_DIR="$BOT_HOME/commands"           # web-panel POST'd commands (drop-files)
 ACCOUNTS_FILE="$BOT_HOME/accounts.list" # one account name per line for multi-WeChat
-RAG_DIR="$BOT_HOME/rag"                 # per-chat / _global knowledge docs
+RAG_DIR="$BOT_HOME/pin"                 # per-chat / _global pinned snippets (legacy "rag" → /pin)
 
 mkdir -p "$LOG_DIR" "$SESS_DIR" "$WORK_ROOT" "$DL_ROOT" \
          "$SOULS_DIR" "$SKILLS_DIR" "$MEM_DIR" "$QUOTA_DIR" \
@@ -852,15 +852,15 @@ EOF
 # ---------- RAG (lightweight per-chat / global knowledge) ----------
 # Layout: $RAG_DIR/<chat_key>/*.txt    (per-chat)
 #         $RAG_DIR/_global/*.txt        (shared across all chats)
-# Per-chat toggle (default ON): file $SESS_DIR/<key>.rag_off => OFF
-rag_is_on()   { [[ ! -f "$SESS_DIR/$1.rag_off" ]]; }
-rag_enable()  { rm -f "$SESS_DIR/$1.rag_off"; }
-rag_disable() { : > "$SESS_DIR/$1.rag_off"; }
+# Per-chat toggle (default ON): file $SESS_DIR/<key>.pin_off => OFF
+pin_is_on()   { [[ ! -f "$SESS_DIR/$1.pin_off" && ! -f "$SESS_DIR/$1.rag_off" ]]; }
+pin_enable()  { rm -f "$SESS_DIR/$1.pin_off" "$SESS_DIR/$1.rag_off"; }
+pin_disable() { : > "$SESS_DIR/$1.pin_off"; }
 
-rag_dir_for() { mkdir -p "$RAG_DIR/$1"; echo "$RAG_DIR/$1"; }
-rag_add()     { local d=$(rag_dir_for "$1"); printf '%s' "$3" > "$d/$2.txt"; }
-rag_rm()      { rm -f "$RAG_DIR/$1/$2.txt"; }
-rag_list()    {
+pin_dir_for() { mkdir -p "$RAG_DIR/$1"; echo "$RAG_DIR/$1"; }
+pin_add()     { local d=$(pin_dir_for "$1"); printf '%s' "$3" > "$d/$2.txt"; }
+pin_rm()      { rm -f "$RAG_DIR/$1/$2.txt"; }
+pin_list()    {
   local key="$1" f base
   echo "== per-chat ($key) =="
   for f in "$RAG_DIR/$key"/*.txt; do [[ -f "$f" ]] || continue; base=$(basename "$f" .txt); echo "  $base ($(wc -c < "$f") bytes)"; done
@@ -868,10 +868,10 @@ rag_list()    {
   for f in "$RAG_DIR/_global"/*.txt; do [[ -f "$f" ]] || continue; base=$(basename "$f" .txt); echo "  $base ($(wc -c < "$f") bytes)"; done
 }
 
-# rag_retrieve <chat_key> <query>  — echoes "[Knowledge]:\n..." or empty.
-rag_retrieve() {
+# pin_retrieve <chat_key> <query>  — echoes "[Pinned]:\n..." or empty.
+pin_retrieve() {
   local key="$1" query="$2"
-  rag_is_on "$key" || return 1
+  pin_is_on "$key" || return 1
   local dirs=("$RAG_DIR/$key" "$RAG_DIR/_global") d files=()
   for d in "${dirs[@]}"; do
     [[ -d "$d" ]] || continue
@@ -885,18 +885,16 @@ files = sys.argv[2:]
 def tokens(s):
     s = s.lower()
     parts = re.findall(r'[a-z0-9]+', s)
-    # add chinese bigrams
     cj = [c for c in s if '\u4e00' <= c <= '\u9fff']
     bigrams = [''.join(cj[i:i+2]) for i in range(len(cj)-1)]
     return set(parts) | set(bigrams) | set(cj)
 qtok = tokens(query)
 if not qtok: sys.exit(0)
-chunks = []  # (score, path, text)
+chunks = []
 for p in files:
     try:
         txt = open(p, 'r', encoding='utf-8', errors='ignore').read()
     except Exception: continue
-    # 400-char chunks with 50-char overlap
     size, step = 400, 350
     for i in range(0, max(len(txt),1), step):
         c = txt[i:i+size].strip()
@@ -907,7 +905,7 @@ for p in files:
 chunks.sort(reverse=True)
 top = chunks[:3]
 if not top: sys.exit(0)
-print("[Knowledge from RAG]:")
+print("[Pinned snippets]:")
 for sc, name, c in top:
     print(f"--- {name} (score={sc}) ---")
     print(c)
@@ -1044,8 +1042,11 @@ handle_command() {
 — Streaming —
   /stream on|off               live-push 🤔/🔧 progress while qoder works (default off)
 
-— Knowledge (RAG) —
-  /rag list|on|off|add <name> <text>|rm <name>
+— Pinned snippets (always-on cheatsheet) —
+  /pin list|on|off|add <name> <text>|rm <name>
+
+— Knowledge base (RAG, on-demand) —
+  /rag add <feishu-url> | list | rm <doc_token> | on | off | test <q>
 
 — Smart routing —
   /auto on|off                 natural-language → command
@@ -1136,10 +1137,17 @@ Send any text / image / voice / video / file directly — multi-turn context is 
 — 流式回复 —
   /stream on|off               实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off）
 
-— 知识库 (RAG) —
-  /rag list|on|off
-  /rag add <名字> <内容>       把一段文本喂给本会话 RAG
-  /rag rm <名字>               删除一条
+— 常驻提示词 (/pin，每次回复都拼) —
+  /pin list|on|off
+  /pin add <名字> <内容>       钉一段文本到本会话
+  /pin rm <名字>               取消
+
+— 知识库 (/rag，按需检索 Feishu 文档) —
+  /rag add <feishu-url>        把一篇 Feishu 文档纳入知识库（只存索引，原文不落地）
+  /rag list                    看已加入的文档
+  /rag rm <doc_token>          移除
+  /rag on|off                  开关
+  /rag test <query>            预览本次会命中什么（调试）
 
 — 自然语言路由 —
   /auto on|off                 自然语言自动调用以上命令（默认 on）
@@ -1641,29 +1649,31 @@ $voices
       esac
       return 0 ;;
 
-    /rag|/知识)
+    /pin|/钉)
       local sub="${rest%% *}" arg=""
       [[ "$rest" != "$sub" ]] && arg="${rest#* }"
       case "$sub" in
-        ""|list|ls) reply_text "$to" "$(rag_list "$key")" ;;
-        on)         rag_enable  "$key"; reply_text "$to" "📚 RAG 已开启，下次提问会自动检索注入" ;;
-        off)        rag_disable "$key"; reply_text "$to" "已关闭 RAG" ;;
+        ""|list|ls) reply_text "$to" "$(pin_list "$key")" ;;
+        on)         pin_enable  "$key"; reply_text "$to" "📌 /pin 已开启，每次回复都会钉上这些文本" ;;
+        off)        pin_disable "$key"; reply_text "$to" "已关闭 /pin" ;;
         add)
           local name body
           name="${arg%% *}"
           [[ "$arg" != "$name" ]] && body="${arg#* }" || body=""
           if [[ -z "$name" || -z "$body" ]]; then
-            reply_text "$to" "用法：/rag add <名字> <内容>"
+            reply_text "$to" "用法：/pin add <名字> <内容>"
           else
-            rag_add "$key" "$name" "$body"
-            reply_text "$to" "✅ 已加入 RAG: $name ($(printf %s "$body" | wc -c) bytes)"
+            pin_add "$key" "$name" "$body"
+            reply_text "$to" "✅ 已钉住: $name ($(printf %s "$body" | wc -c) bytes)"
           fi ;;
         rm|del)
-          [[ -z "$arg" ]] && { reply_text "$to" "用法：/rag rm <名字>"; return 0; }
-          rag_rm "$key" "$arg"
+          [[ -z "$arg" ]] && { reply_text "$to" "用法：/pin rm <名字>"; return 0; }
+          pin_rm "$key" "$arg"
           reply_text "$to" "✅ 已删除 $arg" ;;
-        *) reply_text "$to" "用法：/rag list | on | off | add <名字> <内容> | rm <名字>
-提示：往 \$BOT_HOME/rag/$key/ 或 _global/ 直接放 .txt/.md 文件也可" ;;
+        *) reply_text "$to" "用法：/pin list | on | off | add <名字> <内容> | rm <名字>
+说明：每次回复前都会无条件拼上这些文本（小抄/常驻提示）。
+要做按需检索的知识库请用 /rag。
+提示：往 \$BOT_HOME/pin/$key/ 或 _global/ 直接放 .txt/.md 文件也可" ;;
       esac
       return 0 ;;
 
@@ -2553,14 +2563,28 @@ handle_event() {
   fi
   [[ -z "$prompt" ]] && return
 
-  # RAG: prepend top-K knowledge chunks if enabled and matches found
-  local rag_ctx
-  if rag_ctx=$(rag_retrieve "$key" "$prompt"); then
-    if [[ -n "$rag_ctx" ]]; then
-      prompt="$rag_ctx
+  # /pin: prepend top-K pinned snippets if enabled and matches found
+  local pin_ctx
+  if pin_ctx=$(pin_retrieve "$key" "$prompt"); then
+    if [[ -n "$pin_ctx" ]]; then
+      prompt="$pin_ctx
 
 [User]: $prompt"
-      log "RAG injected (+${#rag_ctx} chars)"
+      log "pin injected (+${#pin_ctx} chars)"
+    fi
+  fi
+
+  # /rag: pull top-K chunks from Feishu doc knowledge base (chunks indexed,
+  # original doc content NOT stored locally — refetched on the fly).
+  if command -v rag_retrieve >/dev/null 2>&1; then
+    local rag_ctx
+    if rag_ctx=$(rag_retrieve "$key" "$prompt" 2>/dev/null); then
+      if [[ -n "$rag_ctx" ]]; then
+        prompt="$rag_ctx
+
+$prompt"
+        log "rag injected (+${#rag_ctx} chars)"
+      fi
     fi
   fi
 
@@ -2747,6 +2771,11 @@ EOF
 }
 
 main() {
+  # One-shot migration: legacy /rag dir was $BOT_HOME/rag (cheatsheets).
+  # That command is now /pin and the dir is $BOT_HOME/pin. Move if needed.
+  if [[ -d "$BOT_HOME/rag" && ! -d "$BOT_HOME/pin" ]]; then
+    mv "$BOT_HOME/rag" "$BOT_HOME/pin" 2>/dev/null && log "migrated $BOT_HOME/rag → $BOT_HOME/pin"
+  fi
   # Load drop-in plugins (plugins/*.sh) now that all helpers are defined.
   command -v plugins_load >/dev/null 2>&1 && plugins_load
 

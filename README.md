@@ -92,6 +92,9 @@ bash bot.sh run
 | `/broadcast 老王,老李,产品群 周会改到 3 点` | 群发到多个昵称 |
 | `/digest now 24` | 立即总结本会话最近 24h；`/digest add "0 9 * * *"` 每日定时 |
 | `/bg <慢问题>` | 后台思考：立即回 🤔，跑完再把结果推回来；`/bg list`、`/bg cancel <id>` |
+| `/pin add 老板偏好 简洁回复` | 常驻"小抄"：每次回复都拼上（原 `/rag` 已改名 `/pin`） |
+| `/rag add <feishu-doc-url>` | 真 RAG：把 Feishu 文档纳入知识库，提问时按关键词检索；**原文不落地** |
+| `/rag list` / `/rag rm <token>` / `/rag test <q>` | 看 / 删 / 调试检索 |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
