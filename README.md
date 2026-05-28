@@ -170,6 +170,39 @@ python3 web.py --port 8088
 
 桥接转发文本 **和** 媒体（图片/语音/文件原样转给对方）；命令仍走 bot，所以随时能 `/bridge off`。
 
+### Skills / Souls — 两种格式
+
+mini_bot 同时支持 **两种 skill 文件格式**：
+
+1. **`.txt` — 模板技能（轻量、参数化）**
+   - 文件放 `state/skills/<name>.txt`
+   - 用 `{{1}}` 占位第一个参数，`{{rest}}` 占位剩余
+   - 例：`state/skills/translate.txt` 内容是 `把下面翻译成 {{1}}：\n\n{{rest}}`
+   - 调用：`/skill translate en hello world` → 替换后整句发给 qoder
+
+2. **`.md` — Anthropic Skill 格式（人格 / 持久身份）**
+   - 文件放 `state/skills/<name>.md`（也可放 `state/skills/<subdir>/<name>.md`）
+   - 顶部 YAML frontmatter：
+     ```yaml
+     ---
+     name: liu-yuchen
+     description: 刘雨尘，自动驾驶算法工程师
+     ---
+     ```
+   - 下面写人物背景 / 工作职责 / 说话风格，可任意长
+   - 调用：
+     - `/skill <name>` → **把它作为本会话人格**（持续，等同 `/soul`）
+     - `/skill <name> <任务>` → 一次性以该人格回答（不污染会话）
+     - `/skill unstick` → 退出，回到 default
+
+```text
+/skill list                   # 列出全部，显示 description
+/skill show 数字刘雨尘         # 查看正文
+/skill 数字刘雨尘              # 切换人格（重置会话）
+/skill unstick                # 回到 default
+/soul 数字刘雨尘               # 等同 /skill 数字刘雨尘（souls/skills 互通）
+```
+
 ### 自定义插件（plugins/*.sh）
 
 任何放进 `plugins/` 的 `.sh` 文件，bot 启动时会自动 source。在文件里调一次

@@ -436,12 +436,27 @@ set_soul_for_key() { printf '%s' "$2" > "$SESS_DIR/$1.soul"; }
 
 soul_text() {
   local name="${1:-default}"
-  local f="$SOULS_DIR/${name}.txt"
-  [[ -f "$f" ]] && cat "$f" || cat "$SOULS_DIR/default.txt"
+  # Search order: souls/<name>.md > .txt > skills/<name>.md > .txt
+  # This lets a Claude-style .md skill double as a soul/persona.
+  local cand
+  for cand in \
+      "$SOULS_DIR/${name}.md"  "$SOULS_DIR/${name}.txt" \
+      "$SKILLS_DIR/${name}.md" "$SKILLS_DIR/${name}.txt" \
+      "$SKILLS_DIR"/*/"${name}.md" "$SKILLS_DIR"/*/"${name}.txt"; do
+    [[ -f "$cand" ]] || continue
+    if [[ "$cand" == *.md ]]; then _strip_frontmatter "$cand"; else cat "$cand"; fi
+    return 0
+  done
+  # Fallback to default soul
+  [[ -f "$SOULS_DIR/default.txt" ]] && cat "$SOULS_DIR/default.txt"
 }
 
 list_souls() {
-  ls "$SOULS_DIR" 2>/dev/null | sed -E 's/\.txt$//' | sort
+  # Souls live in $SOULS_DIR; .md skills are also usable as souls so include them.
+  {
+    find "$SOULS_DIR" -maxdepth 1 -type f \( -name '*.txt' -o -name '*.md' \) 2>/dev/null \
+      | sed -E "s,^${SOULS_DIR}/,,; s,\.(txt|md)$,,"
+  } | sort -u
 }
 
 # ---------- memory ----------
@@ -481,15 +496,70 @@ EOF
 EOF
 }
 
-list_skills() { ls "$SKILLS_DIR" 2>/dev/null | sed -E 's/\.txt$//' | sort; }
+list_skills() {
+  # Lists every file in $SKILLS_DIR (top-level + first level of subdirs)
+  # supporting BOTH `.txt` (legacy template) and `.md` (Anthropic Skill format
+  # with YAML frontmatter). Output: bare name per line, sorted.
+  {
+    find "$SKILLS_DIR" -maxdepth 2 -type f \( -name '*.txt' -o -name '*.md' \) 2>/dev/null \
+      | sed -E "s,^${SKILLS_DIR}/,,; s,\.(txt|md)$,,"
+  } | sort -u
+}
 
-# Expand a skill template. Usage: expand_skill <name> "<arg1>" "<rest...>"
+# Resolve a skill name → file path. Returns first match across .md then .txt,
+# both flat and one level of subdirs. Empty on miss.
+_skill_path() {
+  local name="$1" cand
+  for cand in \
+    "$SKILLS_DIR/${name}.md"  "$SKILLS_DIR/${name}.txt" \
+    "$SKILLS_DIR"/*/"${name}.md" "$SKILLS_DIR"/*/"${name}.txt"; do
+    [[ -f "$cand" ]] && { printf '%s' "$cand"; return 0; }
+  done
+  return 1
+}
+
+# Strip YAML frontmatter from a markdown skill/soul. If no frontmatter, echoes
+# the file verbatim. Frontmatter is the first --- … --- block.
+_strip_frontmatter() {
+  awk 'BEGIN{infm=0; done=0}
+       NR==1 && /^---[[:space:]]*$/ { infm=1; next }
+       infm && /^---[[:space:]]*$/   { infm=0; done=1; next }
+       infm                           { next }
+       { print }' "$1"
+}
+
+# Pull `description:` value from .md frontmatter (empty if none/not .md).
+_skill_description() {
+  local f="$1"
+  [[ "$f" == *.md ]] || return 0
+  awk '/^---[[:space:]]*$/{c++; if(c==2) exit; next}
+       c==1 && /^description:/{
+         sub(/^description:[[:space:]]*/, "");
+         sub(/^"/, ""); sub(/"$/, "");
+         sub(/^'\''/, ""); sub(/'\''$/, "");
+         print; exit
+       }' "$f"
+}
+
+# Read the BODY of a skill (frontmatter stripped for .md, raw for .txt).
+_skill_body() {
+  local f="$1"
+  [[ -f "$f" ]] || return 1
+  if [[ "$f" == *.md ]]; then _strip_frontmatter "$f"; else cat "$f"; fi
+}
+
+# Expand a .txt skill template with {{1}} / {{rest}} substitution.
+# (For .md skills the body is used as-is — no templating.)
 expand_skill() {
-  local name="$1" a1="${2:-}" rest="${3:-}" f="$SKILLS_DIR/$1.txt"
-  [[ -f "$f" ]] || { printf ''; return 1; }
-  awk -v a1="$a1" -v rest="$rest" '
-    { gsub(/\{\{1\}\}/, a1); gsub(/\{\{rest\}\}/, rest); print }
-  ' "$f"
+  local name="$1" a1="${2:-}" rest="${3:-}"
+  local f; f=$(_skill_path "$name") || { printf ''; return 1; }
+  if [[ "$f" == *.md ]]; then
+    _skill_body "$f"
+  else
+    awk -v a1="$a1" -v rest="$rest" '
+      { gsub(/\{\{1\}\}/, a1); gsub(/\{\{rest\}\}/, rest); print }
+    ' "$f"
+  fi
 }
 
 # ---------- mcp ----------
@@ -1931,8 +2001,9 @@ $body"
       reply_text "$to" "✅ 已保存 soul：${name}（用 /soul $name 切换）"
       ;;
     *)
-      # /soul <name>  → switch
-      if [[ -f "$SOULS_DIR/$sub.txt" ]]; then
+      # /soul <name>  → switch (accepts .txt souls AND .md skills as personas)
+      if [[ -f "$SOULS_DIR/$sub.txt" ]] || [[ -f "$SOULS_DIR/$sub.md" ]] \
+         || _skill_path "$sub" >/dev/null; then
         set_soul_for_key "$key" "$sub"
         reset_session "$key"   # new persona ⇒ fresh qoder session
         reply_text "$to" "✅ 已切换 soul：${sub}（已重置会话以应用新人格）"
@@ -1972,29 +2043,78 @@ handle_skill() {
   local sub="${rest%% *}" args=""
   [[ "$rest" != "$sub" ]] && args="${rest#* }"
   case "$sub" in
-    ""|list)
+    ""|list|ls)
+      # Build "  - name  — description" lines (description from .md frontmatter)
+      local listing
+      listing=$(while IFS= read -r n; do
+        [[ -z "$n" ]] && continue
+        local f desc
+        f=$(_skill_path "$n") || continue
+        desc=$(_skill_description "$f")
+        if [[ -n "$desc" ]]; then printf '  - %s — %s\n' "$n" "$desc"
+        else                       printf '  - %s\n' "$n"; fi
+      done < <(list_skills))
+      [[ -z "$listing" ]] && listing="  (空 — 把 .md 或 .txt 文件丢到 $SKILLS_DIR/)"
       reply_text "$to" "🛠 可用技能：
-$(list_skills | sed 's/^/  - /')
-用法：/skill <name> [arg1] [...]
-查看：/skill show <name>"
+$listing
+
+用法：
+  /skill <name>            把它作为本会话人格（.md 持久化，/skill unstick 退出）
+  /skill <name> <任务>     一次性以该技能为系统提示跑一遍（不污染会话）
+  /skill show <name>       查看技能正文
+  /skill unstick           退出当前 stuck 技能/人格"
       ;;
     show)
       [[ -z "$args" ]] && { reply_text "$to" "用法：/skill show <name>"; return; }
-      local body; body=$(cat "$SKILLS_DIR/$args.txt" 2>/dev/null) || { reply_text "$to" "未找到技能：$args"; return; }
-      reply_text "$to" "🛠 skill=$args
+      local f desc body
+      f=$(_skill_path "$args") || { reply_text "$to" "未找到技能：$args"; return; }
+      desc=$(_skill_description "$f")
+      body=$(_skill_body "$f")
+      reply_text "$to" "🛠 skill=$args${desc:+
+description: $desc}
+file: ${f#$BOT_HOME/}
 
 $body"
       ;;
+    unstick|stop|off)
+      set_soul_for_key "$key" "default"
+      reset_session "$key"
+      reply_text "$to" "✅ 已退出当前技能/人格，回到 default soul（已重置对话）。"
+      ;;
     *)
-      # /skill <name> [arg1] [rest…]
-      local name="$sub" a1="" arest=""
+      # /skill <name> [args…]
+      local name="$sub"
+      local f; f=$(_skill_path "$name") || {
+        reply_text "$to" "未找到技能：${name}（/skill list 查看）"; return
+      }
+      # MD skill with no args → stick as session persona (like /soul)
+      if [[ "$f" == *.md && -z "$args" ]]; then
+        set_soul_for_key "$key" "$name"
+        reset_session "$key"   # fresh session so new persona takes hold cleanly
+        local desc; desc=$(_skill_description "$f")
+        reply_text "$to" "🎭 已切换到「$name」${desc:+ — $desc}
+（已重置对话以应用新人格；/skill unstick 退出，/reset 重新开始）"
+        log "SKILL stick name=$name key=$key"
+        return
+      fi
+      # Otherwise: one-off agent run with skill body as system prompt + args as task
+      local a1="" arest=""
       a1="${args%% *}"
       [[ "$args" != "$a1" ]] && arest="${args#* }"
       [[ "$args" == "" ]] && { a1=""; arest=""; }
-      local prompt; prompt=$(expand_skill "$name" "$a1" "$arest") || {
-        reply_text "$to" "未找到技能：${name}（/skill list 查看）"; return
-      }
-      log "SKILL run name=$name a1='$a1' rest='${arest:0:40}'"
+      local prompt
+      if [[ "$f" == *.md ]]; then
+        # For .md skills with args: system_prompt = body, user_prompt = args.
+        # We splice them together since run_with_heartbeat takes one prompt.
+        prompt="$(_skill_body "$f")
+
+---
+用户的具体请求：$args"
+      else
+        prompt=$(expand_skill "$name" "$a1" "$arest")
+      fi
+      [[ -z "$prompt" ]] && { reply_text "$to" "技能 $name 内容为空"; return; }
+      log "SKILL run name=$name file=${f##*/} args='${args:0:60}'"
       local workspace="$WORK_ROOT/$key"; mkdir -p "$workspace"
       local model; model=$(model_for_key "$key")
       local ans
@@ -2009,15 +2129,39 @@ handle_mcp() {
   local to="$1" rest="$2"
   case "${rest%% *}" in
     ""|list)
-      reply_text "$to" "🔌 MCP servers：
+      if [[ ! -f "$MCP_CONFIG" ]]; then
+        reply_text "$to" "🔌 还没配置 MCP。最简模板（保存到 ${MCP_CONFIG}）：
+
+{
+  \"mcpServers\": {
+    \"filesystem\": {
+      \"command\": \"npx\",
+      \"args\": [\"-y\", \"@modelcontextprotocol/server-filesystem\", \"$HOME\"]
+    },
+    \"fetch\": {
+      \"command\": \"uvx\",
+      \"args\": [\"mcp-server-fetch\"]
+    }
+  }
+}
+
+保存后无需重启，下一轮 qoder 调用自动加载。"
+      else
+        reply_text "$to" "🔌 MCP servers：
 $(list_mcp_servers)
-$(if [[ -f $MCP_CONFIG ]]; then echo "(qoder 会通过 --mcp-config 加载 $MCP_CONFIG)"; fi)"
+(qoder 通过 --mcp-config 自动加载 $MCP_CONFIG；改完立刻生效，无需 reload)"
+      fi
       ;;
     reload)
       if [[ -f "$MCP_CONFIG" ]]; then
-        reply_text "$to" "✅ mcp.json 将在下一轮 qoder 调用时生效（每次调用都会重读）。"
+        # Validate JSON
+        if jq -e . "$MCP_CONFIG" >/dev/null 2>&1; then
+          reply_text "$to" "✅ mcp.json 校验通过（JSON 合法），下次回复立即生效。"
+        else
+          reply_text "$to" "❌ mcp.json 不是合法 JSON，请检查 ${MCP_CONFIG}"
+        fi
       else
-        reply_text "$to" "(没有 ${MCP_CONFIG}；放一个 {\"mcpServers\":{...}} 就行)"
+        reply_text "$to" "(没有 ${MCP_CONFIG}；发 /mcp 看模板)"
       fi
       ;;
     *) reply_text "$to" "用法：/mcp [list|reload]" ;;
