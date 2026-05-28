@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh bridge.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -1151,6 +1151,14 @@ Send any text / image / voice / video / file directly — multi-turn context is 
   /route clear [global]        清空
   /cost [day|week|all]         查看 token / 估算费用
 
+— 跨平台桥接 / 昵称簿 —
+  /nick [list|recent|add <名字> <id>|rm]   维护昵称→平台账号id 的映射
+       /nick add <名字> last 用最近一条消息的发件人快速加入
+  /msg <名字> <文本>           直接发文字给该联系人（自动选平台）
+  /bridge <A> <B>              双向桥接两个昵称（消息互转，不走 qoder）
+  /bridge off <名字>           撤销该联系人参与的所有桥接
+  /bridge list                 查看桥接列表
+
 — 本地项目 —
   /cwd <绝对路径>              把 qoder 工作目录锁到该项目
   /cwd | /cwd clear            查看 / 恢复默认沙盒
@@ -1348,6 +1356,120 @@ example：/team set researcher critic editor"
       local scope_c="${rest:-day}"
       case "$scope_c" in day|week|all) ;; *) scope_c="day" ;; esac
       reply_text "$to" "$(cost_report "$scope_c")"
+      return 0 ;;
+
+    /nick|/contact|/contacts|/昵称)
+      # /nick                                  list named contacts
+      # /nick recent                           show recently-seen senders
+      # /nick add <name> <platform>:<account>:<peer_id>
+      # /nick add <name> last                  use most-recently-seen sender
+      # /nick rm <name>
+      local sub_n="${rest%% *}"
+      local args_n="${rest#"$sub_n"}"; args_n="${args_n# }"
+      case "$sub_n" in
+        ""|list|show)
+          reply_text "$to" "📒 昵称簿：
+$(contact_list)
+
+用法：/nick add <名字> <platform>:<account>:<id>
+      /nick add <名字> last     # 用最近一条消息的发件人
+      /nick recent              # 看最近 10 个发件人
+      /nick rm <名字>
+配合 /msg <名字> <文本> 直接发送，/bridge <A> <B> 双向桥接。"
+          ;;
+        recent)
+          reply_text "$to" "🕘 最近见过的发件人：
+$(contact_recent 10)"
+          ;;
+        add)
+          local nm="${args_n%% *}"
+          local rest_n="${args_n#"$nm"}"; rest_n="${rest_n# }"
+          [[ -z "$nm" || -z "$rest_n" ]] && { reply_text "$to" "用法：/nick add <名字> <platform>:<account>:<id> | last"; return 0; }
+          local plat acct pid
+          if [[ "$rest_n" == "last" || "$rest_n" == "recent" ]]; then
+            local last; last=$(contact_last_seen) || { reply_text "$to" "❌ 还没有最近发件人"; return 0; }
+            plat=$(echo "$last" | cut -f1); acct=$(echo "$last" | cut -f2); pid=$(echo "$last" | cut -f3)
+          else
+            # parse "platform:account:peer_id"  (or "platform:peer_id" → account=default)
+            local p1 p2 p3
+            p1="${rest_n%%:*}"; rest_n="${rest_n#*:}"
+            if [[ "$rest_n" == "$p1" ]]; then
+              reply_text "$to" "❌ 解析失败：需要形如 lark:default:ou_xxx"; return 0
+            fi
+            if [[ "$rest_n" == *:* ]]; then
+              p2="${rest_n%%:*}"; p3="${rest_n#*:}"
+            else
+              p2="default"; p3="$rest_n"
+            fi
+            plat="$p1"; acct="$p2"; pid="$p3"
+          fi
+          contact_add "$nm" "$plat" "$acct" "$pid"
+          reply_text "$to" "✅ 已记入：$nm → $plat:$acct:$pid"
+          ;;
+        rm|remove)
+          [[ -z "$args_n" ]] && { reply_text "$to" "用法：/nick rm <名字>"; return 0; }
+          contact_rm "$args_n"
+          reply_text "$to" "✅ 已删除：$args_n"
+          ;;
+        *) reply_text "$to" "未知子命令：$sub_n。用法：/nick [list|recent|add <名字> <id>|rm <名字>]" ;;
+      esac
+      return 0 ;;
+
+    /msg|/发|/send)
+      # /msg <名字> <文本>
+      local nm_m="${rest%% *}"
+      local txt_m="${rest#"$nm_m"}"; txt_m="${txt_m# }"
+      [[ -z "$nm_m" || -z "$txt_m" ]] && { reply_text "$to" "用法：/msg <名字> <文本>
+（先用 /nick add 注册昵称）"; return 0; }
+      local trip; trip=$(contact_get "$nm_m") || { reply_text "$to" "❌ 找不到昵称：$nm_m。/nick list 看看？"; return 0; }
+      if bridge_send "$nm_m" "$txt_m"; then
+        reply_text "$to" "📤 已发给 $nm_m"
+      else
+        reply_text "$to" "❌ 发送失败（见 reply.err）"
+      fi
+      return 0 ;;
+
+    /bridge|/桥接)
+      # /bridge <A> <B>       create 2-way bridge between two named contacts
+      # /bridge off <A>       remove all bridges touching A
+      # /bridge list
+      local sub_b="${rest%% *}"
+      local args_b="${rest#"$sub_b"}"; args_b="${args_b# }"
+      case "$sub_b" in
+        ""|list|show)
+          reply_text "$to" "🌉 当前桥接：
+$(bridge_list)
+
+用法：/bridge <名字A> <名字B>         双向桥接两个联系人（消息互转，不走 qoder）
+      /bridge off <名字>            撤销
+      /bridge list"
+          ;;
+        off|stop|rm)
+          [[ -z "$args_b" ]] && { reply_text "$to" "用法：/bridge off <名字>"; return 0; }
+          local trip; trip=$(contact_get "$args_b") || { reply_text "$to" "❌ 找不到 $args_b"; return 0; }
+          local plat acct pid
+          plat=$(echo "$trip" | cut -f1); acct=$(echo "$trip" | cut -f2); pid=$(echo "$trip" | cut -f3)
+          bridge_unpair "$(bridge_key "$plat" "$acct" "$pid")"
+          reply_text "$to" "✅ 已撤销 $args_b 的全部桥接"
+          ;;
+        *)
+          local nameA="$sub_b" nameB="$args_b"
+          [[ -z "$nameA" || -z "$nameB" ]] && { reply_text "$to" "用法：/bridge <名字A> <名字B>"; return 0; }
+          local tA tB
+          tA=$(contact_get "$nameA") || { reply_text "$to" "❌ 找不到 $nameA"; return 0; }
+          tB=$(contact_get "$nameB") || { reply_text "$to" "❌ 找不到 $nameB"; return 0; }
+          local kA kB
+          kA=$(bridge_key "$(echo "$tA"|cut -f1)" "$(echo "$tA"|cut -f2)" "$(echo "$tA"|cut -f3)")
+          kB=$(bridge_key "$(echo "$tB"|cut -f1)" "$(echo "$tB"|cut -f2)" "$(echo "$tB"|cut -f3)")
+          bridge_pair "$kA" "$kB"
+          # tell each side they're now bridged
+          G_PLATFORM="$(echo "$tA"|cut -f1)" G_ACCOUNT_NAME="$(echo "$tA"|cut -f2)" \
+            reply_text "$(echo "$tA"|cut -f3)" "🌉 你现在与「$nameB」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
+          G_PLATFORM="$(echo "$tB"|cut -f1)" G_ACCOUNT_NAME="$(echo "$tB"|cut -f2)" \
+            reply_text "$(echo "$tB"|cut -f3)" "🌉 你现在与「$nameA」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
+          reply_text "$to" "✅ 已桥接：$nameA ⇄ $nameB"
+          ;;
+      esac
       return 0 ;;
 
     /automem|/自动记忆)
@@ -2265,6 +2387,11 @@ handle_event() {
   [[ -n "$G_MEDIA" ]] && n_media=$(awk -F'\t' '{print NF}' <<<"$G_MEDIA")
 
   log "EVENT acct=$G_ACCOUNT_ID from=$G_FROM ctype=$G_CHAT_TYPE text='${G_TEXT:0:60}' media=$n_media mention=$G_MENTIONED id=$G_ID"
+
+  # Remember every (platform, account, sender) so users can do  /nick add foo last
+  if command -v contact_remember >/dev/null 2>&1; then
+    contact_remember "$G_PLATFORM" "${G_ACCOUNT_NAME:-default}" "$G_FROM" "${G_FROM_NAME:-$G_FROM}" 2>/dev/null || true
+  fi
   emit_event "$(jq -nc \
     --arg id    "$G_ID" \
     --arg plat  "$G_PLATFORM" \
@@ -2335,6 +2462,28 @@ handle_event() {
     HOOK_KEY="$key" HOOK_MODEL="$model" \
       printf '%s' "$G_TEXT" | run_hook on_command >/dev/null || true
     if handle_command "$G_REPLY_TO" "$key" "$G_TEXT"; then return; fi
+  fi
+
+  # 2-way bridge: if this chat key is bridged to another, relay text + return.
+  # Slash commands above still go to handle_command (so /bridge off works).
+  if command -v bridge_peer_of >/dev/null 2>&1; then
+    local _self_key _peer_key
+    _self_key=$(bridge_key "$G_PLATFORM" "${G_ACCOUNT_NAME:-default}" "$G_FROM")
+    if _peer_key=$(bridge_peer_of "$_self_key"); then
+      local _pp _pa _pi _rest
+      _pp="${_peer_key%%:*}"; _rest="${_peer_key#*:}"
+      _pa="${_rest%%:*}";     _pi="${_rest#*:}"
+      local _from_label="${G_FROM_NAME:-$G_FROM}"
+      local _name_from; _name_from=$(contact_lookup_name "$G_PLATFORM" "${G_ACCOUNT_NAME:-default}" "$G_FROM" 2>/dev/null)
+      [[ -n "$_name_from" ]] && _from_label="$_name_from"
+      local _payload="[$_from_label]: ${G_TEXT}"
+      if [[ -z "$G_TEXT" ]] && (( n_media > 0 )); then
+        _payload="[$_from_label] 发了 $n_media 个附件（暂未转发媒体，请直说重点）"
+      fi
+      log "BRIDGE relay $_self_key -> $_peer_key (${#G_TEXT} chars)"
+      G_PLATFORM="$_pp" G_ACCOUNT_NAME="$_pa" reply_text "$_pi" "$_payload" || true
+      return
+    fi
   fi
 
   # Whitelist gate (if non-empty, only listed users get answered; admins always allowed)

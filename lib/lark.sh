@@ -25,10 +25,30 @@ lark_reply_text() {
     at_tag=$(printf '<at user_id="%s"></at> ' "$G_MENTION_USER")
     text="${at_tag}${text}"
   fi
-  data=$(jq -nc --arg t "$text" '{msg_type:"text", content:({text:$t}|tojson)}')
-  resp=$(lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
-    --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
-  [[ -n "$resp" ]]
+  # If the target looks like a chat-id (oc_*) or user open-id (ou_*) instead of
+  # a message-id (om_*), send a fresh message rather than replying to a message.
+  case "$message_id" in
+    om_*)
+      data=$(jq -nc --arg t "$text" '{msg_type:"text", content:({text:$t}|tojson)}')
+      resp=$(lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
+        --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
+      [[ -n "$resp" ]]
+      ;;
+    oc_*)
+      lark-cli im +messages-send --as "$as" --chat-id "$message_id" --text "$text" \
+        >/dev/null 2>>"$LOG_DIR/reply.err"
+      ;;
+    ou_*)
+      lark-cli im +messages-send --as "$as" --user-id "$message_id" --text "$text" \
+        >/dev/null 2>>"$LOG_DIR/reply.err"
+      ;;
+    *)
+      data=$(jq -nc --arg t "$text" '{msg_type:"text", content:({text:$t}|tojson)}')
+      resp=$(lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
+        --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
+      [[ -n "$resp" ]]
+      ;;
+  esac
 }
 
 lark_reply_card() {
