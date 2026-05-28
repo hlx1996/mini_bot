@@ -85,6 +85,11 @@ $out
         reply_text "$to" "❌ 没找到 id=$args"; return 0
       fi
       if kill "$pid" 2>/dev/null; then
+        # Also nuke the qoder grandchild (subshell may have spawned it).
+        pkill -TERM -P "$pid" 2>/dev/null || true
+        sleep 0.3
+        kill -KILL "$pid" 2>/dev/null || true
+        pkill -KILL -P "$pid" 2>/dev/null || true
         local tmp; tmp=$(mktemp); grep -v "^${args}	" "$f" >"$tmp" || true; mv "$tmp" "$f"
         reply_text "$to" "🛑 已撤销 #$args (pid=$pid)"
       else
@@ -109,10 +114,10 @@ $out
 
       reply_text "$to" "🤔 收到，我去想想…（任务 #${id}）"
 
-      # Fork: subshell inherits all functions (_bg_runner, run_qoder_agent, ...)
-      # and env. Detach SIGHUP/INT/TERM so it survives the handle_event parent.
+      # Fork: only ignore HUP (so detaching from parent doesn't kill us);
+      # leave INT/TERM open so /bg cancel actually works.
       (
-        trap '' HUP INT TERM
+        trap '' HUP
         _bg_runner "$to" "$key" "$workspace" "$model" "$id" "$plat" "$acct" "$prompt"
       ) </dev/null >>"$LOG_DIR/bg.log" 2>&1 &
       local rpid=$!
