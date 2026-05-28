@@ -773,14 +773,37 @@ image_style_suffix() {
 }
 
 # Generate one image -> echo path on success.
+# Engine selection via $IMAGE_ENGINE: pollinations (default) | hf
 image_generate_one() {
   local prompt="$1" out="$IMAGE_DIR/img-$(date +%s)-$$-${RANDOM}.jpg"
-  local enc; enc=$(jq -rn --arg s "$prompt" '$s|@uri')
-  # Random seed lets each call return different result for same prompt
-  local seed=$((RANDOM * RANDOM))
-  local url="https://image.pollinations.ai/prompt/${enc}?nologo=true&width=768&height=768&seed=${seed}"
-  curl -sSL --max-time 90 -o "$out" "$url" 2>>"$LOG_DIR/image.err" || return 1
-  if [[ ! -s "$out" ]] || [[ $(wc -c < "$out") -lt 1024 ]]; then
+  local engine="${IMAGE_ENGINE:-pollinations}"
+  local code
+  case "$engine" in
+    hf)
+      # HuggingFace Inference (free tier, needs HF_TOKEN)
+      if [[ -z "${HF_TOKEN:-}" ]]; then
+        echo "HF engine selected but HF_TOKEN missing" >>"$LOG_DIR/image.err"; return 1
+      fi
+      local hf_model="${HF_IMAGE_MODEL:-black-forest-labs/FLUX.1-schnell}"
+      local body; body=$(jq -nc --arg p "$prompt" '{inputs:$p}')
+      code=$(curl -sSL --max-time 120 -o "$out" -w '%{http_code}' \
+        -H "Authorization: Bearer ${HF_TOKEN}" \
+        -H 'Content-Type: application/json' \
+        -H 'Accept: image/png' \
+        -d "$body" \
+        "https://api-inference.huggingface.co/models/${hf_model}" \
+        2>>"$LOG_DIR/image.err")
+      ;;
+    *)
+      # Pollinations (no key). model=flux is the modern high-quality option.
+      local pmodel="${POLLINATIONS_MODEL:-flux}"
+      local enc; enc=$(jq -rn --arg s "$prompt" '$s|@uri')
+      local seed=$((RANDOM * RANDOM))
+      local url="https://image.pollinations.ai/prompt/${enc}?model=${pmodel}&nologo=true&enhance=true&width=1024&height=1024&seed=${seed}"
+      code=$(curl -sSL --max-time 120 -o "$out" -w '%{http_code}' "$url" 2>>"$LOG_DIR/image.err")
+      ;;
+  esac
+  if [[ "$code" != "200" ]] || [[ ! -s "$out" ]] || [[ $(wc -c < "$out") -lt 1024 ]]; then
     rm -f "$out"; return 1
   fi
   echo "$out"

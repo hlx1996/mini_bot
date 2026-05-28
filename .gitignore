@@ -1,31 +1,30 @@
-# State (runtime data)
-state/
-**/state/
 
-# Backups
-backups/
-*.tar.gz
-
-# Logs
-*.log
-*.err
-*.out
-*.jsonl
-
-# Caches & temp
-*.pyc
 __pycache__/
 .DS_Store
-*.tmp
+.env
 *.bak
 *.bak.refactor
-
-# Credentials
-.env
+*.err
+*.jsonl
+*.log
+*.out
+*.pyc
+*.tar.gz
+*.tmp
 *.token
+**/state/
+# Backups
+# Caches & temp
+# Credentials
+# Logs
+# State (runtime data)
 # state runtime
-state/watchdog.pid
-state/contacts.tsv
-state/contacts_seen.tsv
-state/bridges.tsv
+backups/
 intent.json
+node_modules/
+package-lock.json
+state/
+state/bridges.tsv
+state/contacts_seen.tsv
+state/contacts.tsv
+state/watchdog.pid
