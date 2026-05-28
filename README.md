@@ -258,6 +258,27 @@ plugin_hello() {
 register_command "/hello" plugin_hello "示例插件"
 ```
 
+### 内置 OpenClaw 风格插件
+
+- `/diagram <需求>`（别名 `/画图`）：把自然语言转成 mermaid 流程图/时序图/类图，
+  调 mermaid.ink 公网服务渲染 PNG，发回聊天。无需安装 mmdc，飞书机器人身份用
+  `--image` 上传（用户身份没权限会自动降级成发链接）。
+  也支持直接给源码：`/diagram mermaid: graph LR; A-->B`。
+- `/run <py|bash|js> <code>`（别名 `/exec`）：代码沙箱。`ulimit -t 15 -v 524288
+  -f 10240` + 跨平台 timeout（GNU timeout / gtimeout / perl alarm 三选一）。
+  stdout/stderr 截到 4KB。
+- `/ocr [图片路径]`（别名 `/识图`）：图转文字。优先 tesseract（中文需要装
+  `tesseract-lang-chi-sim`），没装就用 qoder 的多模态当 fallback。
+  不给路径时自动找本会话最近一张图。
+- `/agent route add <regex> agent:<soul>|team [global]`：和 `/skill route` 一样
+  的关键词→agent 自动触发，命中后会把消息重写成 `/agent <soul> <text>` 或
+  `/team run <text>` 再分发。
+
+### 智能记忆检索（BM25 + 字符二元）
+
+`/memory search <kw>` 默认精确 grep；空命中时自动走 `lib/memory_search.py` 的
+BM25 + 字符二元 ranking（纯 stdlib，对中英都 OK），返回 top-8 带 score。
+
 ### 加密保存对话/记忆
 
 ```bash
