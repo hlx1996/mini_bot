@@ -98,6 +98,9 @@ bash bot.sh run
 | `/rag add-mine [keyword]` | 索引我拥有的所有 docx（需 `search:docs:read` scope，命令会提示登录） |
 | `/rag refresh` | 重新拉一遍所有已索引文档（捕获最新改动） |
 | `/rag list` / `/rag rm <token>` / `/rag test <q>` / `/rag stats` | 看 / 删 / 调试检索 / 看大小 |
+| `/rag watch [Nh\|off]` | 定时自动 refresh（默认每 6h，写入系统 crontab） |
+| `/metrics [1h\|24h\|7d\|all]` | 收/回/失败/字符/≈token/延迟 p50·p95，按平台分组 |
+| `/metrics chat` / `/metrics errors` | Top10 活跃会话 / 最近失败回复 |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 

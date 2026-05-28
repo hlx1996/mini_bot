@@ -342,13 +342,46 @@ print((d.get("data") or {}).get("has_more") or "")
       reply_text "$to" "✅ refresh 完成：$total 篇，成功 ${ok}，失败 $fail"
       return 0 ;;
 
+    watch)
+      # /rag watch [Nh|off] — schedule rag-refresh-all via crontab
+      local hours sub2 spec script tag tmp
+      sub2="${args%% *}"; sub2=$(echo "$sub2" | tr 'A-Z' 'a-z')
+      script="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/scripts/rag-refresh-all.sh"
+      tag="# mini_bot:rag-watch"
+      tmp=$(mktemp)
+      crontab -l 2>/dev/null | grep -v "$tag" > "$tmp" || true
+      if [[ "$sub2" == off ]]; then
+        crontab "$tmp" 2>/dev/null
+        rm -f "$tmp"
+        reply_text "$to" "🛑 /rag watch 已关闭"
+        return 0
+      fi
+      hours="${sub2:-6}"
+      [[ "$hours" =~ ^[0-9]+$ ]] || hours=6
+      if [[ "$hours" -le 0 || "$hours" -gt 24 ]]; then hours=6; fi
+      if [[ "$hours" -eq 1 ]]; then
+        spec="0 * * * *"
+      else
+        spec="0 */$hours * * *"
+      fi
+      echo "$spec $script $tag" >> "$tmp"
+      crontab "$tmp" 2>/dev/null
+      rm -f "$tmp"
+      reply_text "$to" "✅ /rag watch 已开启：每 ${hours} 小时自动 refresh 所有索引
+  schedule: $spec
+  log:      state/logs/rag-watch.log
+  关闭：    /rag watch off"
+      return 0 ;;
+
     stats)
       local idx1 idx2 d1 d2 c1 c2
       idx1=$(_rag_idx_for "$key"); idx2=$(_rag_idx_for "_global")
       d1=$(awk -F'\t' 'NF{print $1}' "$idx1" 2>/dev/null | sort -u | wc -l | tr -d ' ')
       d2=$(awk -F'\t' 'NF{print $1}' "$idx2" 2>/dev/null | sort -u | wc -l | tr -d ' ')
-      c1=$(wc -l < "$idx1" 2>/dev/null | tr -d ' '); c1=${c1:-0}
-      c2=$(wc -l < "$idx2" 2>/dev/null | tr -d ' '); c2=${c2:-0}
+      c1=0; c2=0
+      [[ -f "$idx1" ]] && c1=$(wc -l < "$idx1" 2>/dev/null | tr -d ' ')
+      [[ -f "$idx2" ]] && c2=$(wc -l < "$idx2" 2>/dev/null | tr -d ' ')
+      c1=${c1:-0}; c2=${c2:-0}
       reply_text "$to" "📊 /rag stats
   本会话：$d1 篇文档，$c1 个 chunks
   全局：  $d2 篇文档，$c2 个 chunks
@@ -403,9 +436,10 @@ print((d.get("data") or {}).get("has_more") or "")
   /rag list / rm <token>              管理
   /rag on | off                       开关
   /rag test <q>                       预览检索
-  /rag stats                          看索引大小"
+  /rag stats                          看索引大小
+  /rag watch [Nh|off]                 后台定时 refresh（默认每 6 小时）"
       return 0 ;;
   esac
 }
 
-register_command "/rag" plugin_rag "RAG: /rag add <url> | add-folder | add-mine | refresh | list | rm | on|off | test | stats"
+register_command "/rag" plugin_rag "RAG: /rag add <url> | add-folder | add-mine | refresh | watch | list | rm | on|off | test | stats"
