@@ -546,7 +546,7 @@ quota_exceeded() {
 already_welcomed() { is_listed "$WELCOMED_FILE" "$1"; }
 mark_welcomed()    { list_add "$WELCOMED_FILE" "$1"; }
 
-WELCOME_MSG_DEFAULT='👋 你好，我是 wxbot（qoder lite 驱动）。
+WELCOME_MSG_DEFAULT='👋 你好，我是 mini_bot（qoder lite 驱动）。
 直接发文字/图片/语音/视频/文件即可，多轮上下文我会记住。
 发 /help 查看全部命令。'
 
@@ -601,7 +601,7 @@ ensure_sample_hooks() {
   local f="$HOOKS_DIR/README.txt"
   [[ -f "$f" ]] && return
   cat > "$f" <<'TXT'
-Hooks are optional shell scripts that wxbot runs at key moments. Drop an
+Hooks are optional shell scripts that mini_bot runs at key moments. Drop an
 executable script into this directory; the file basename selects when it runs:
 
   pre_turn.sh    — runs BEFORE qoder; stdin = the user's text;
@@ -1206,7 +1206,7 @@ Send any text / image / voice / video / file directly — multi-turn context is 
       return 0 ;;
 
     /status)
-      reply_text "$to" "🤖 wxbot OK
+      reply_text "$to" "🤖 mini_bot OK
 host: $(uname -srm)
 qoder: $($QODER_BIN --version 2>/dev/null | head -1)
 soul: $(current_soul_for_key "$key")
@@ -1984,7 +1984,7 @@ handle_stats() {
   today_in=$( jq -r --argjson t0 "$t0" 'select(.kind=="event" and (.ts // 0) >= $t0) | 1' "$EVENT_LOG" 2>/dev/null | wc -l | awk '{print $1}')
   today_out=$(jq -r --argjson t0 "$t0" 'select(.kind=="reply" and (.ts // 0) >= $t0) | 1' "$EVENT_LOG" 2>/dev/null | wc -l | awk '{print $1}')
   chats=$(ls "$SESS_DIR" 2>/dev/null | sed -E 's/\.[^.]+$//' | sort -u | wc -l | awk '{print $1}')
-  reply_text "$to" "📈 wxbot 统计
+  reply_text "$to" "📈 mini_bot 统计
 全部事件: $total
 今日收: $today_in
 今日发: $today_out
@@ -2113,7 +2113,7 @@ ${body:-(空)}"
 # /cron — backed by the system crontab (portable: macOS + Linux)
 ###############################################################################
 # Lines look like:
-#   <cron-expr> /full/path/wxbot.sh --cron-fire <to> <key> <prompt-base64>   # wxcron:<key>:<id>
+#   <cron-expr> /full/path/bot.sh --cron-fire <to> <key> <prompt-base64>   # wxcron:<key>:<id>
 
 WX_CRON_TAG_PREFIX="wxcron"
 

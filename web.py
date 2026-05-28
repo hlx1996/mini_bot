@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""wxweb.py — read-only web dashboard for wxbot.sh.
+"""web.py — read-only web dashboard for mini_bot (bot.sh).
 
 Usage:
-  python3 ~/wxweb.py                       # serve on http://127.0.0.1:8765
-  python3 ~/wxweb.py --port 9000 --host 0.0.0.0
-  BOT_HOME=/tmp/wxbot-test python3 ~/mini_bot/web.py
+  python3 ~/Projects/mini_bot/web.py                       # serve on http://127.0.0.1:8765
+  python3 ~/Projects/mini_bot/web.py --port 9000 --host 0.0.0.0
+  BOT_HOME=/tmp/mini_bot-test python3 ~/Projects/mini_bot/web.py
 
 Endpoints:
   GET /                  -> dashboard HTML (single page, auto-refreshes)
@@ -64,7 +64,7 @@ def status() -> dict:
     pid, uptime = None, None
     try:
         out = subprocess.check_output(
-            ["pgrep", "-f", "wxbot.sh"], text=True, stderr=subprocess.DEVNULL
+            ["pgrep", "-f", "bot.sh"], text=True, stderr=subprocess.DEVNULL
         ).strip()
         pids = [int(x) for x in out.splitlines() if x.strip().isdigit()]
         pids = [p for p in pids if p != os.getpid()]
@@ -101,7 +101,7 @@ def sessions() -> list[dict]:
     for p in SESS_DIR.iterdir():
         if p.is_file():
             keys.add(p.stem)
-    # msg counts from events.jsonl. Chat key matches wxbot.sh:
+    # msg counts from events.jsonl. Chat key matches bot.sh:
     #   sha1(account_id + 0x1f + from)[:16]
     msg_counts: dict[str, int] = {}
     if EVENT_LOG.exists():
@@ -365,7 +365,7 @@ def enqueue_command(payload: dict) -> dict:
 
 INDEX_HTML = r"""<!doctype html>
 <html lang="zh"><head>
-<meta charset="utf-8"><title>wxbot 监控面板</title>
+<meta charset="utf-8"><title>mini_bot 监控面板</title>
 <style>
 body{font:14px/1.5 -apple-system,Segoe UI,Helvetica,Arial,sans-serif;margin:0;background:#0e1116;color:#e8eaed}
 header{background:#1c2128;padding:12px 20px;display:flex;align-items:center;gap:16px;border-bottom:1px solid #30363d}
@@ -391,7 +391,7 @@ button{background:#238636;color:#fff;border:0;padding:4px 10px;border-radius:4px
 button:hover{background:#2ea043}
 </style></head><body>
 <header>
-  <h1>📲 wxbot 监控面板</h1>
+  <h1>📲 mini_bot 监控面板</h1>
   <span id="badge"></span>
   <span class="muted" id="now"></span>
   <span style="margin-left:auto">
