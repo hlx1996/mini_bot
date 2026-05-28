@@ -1339,7 +1339,7 @@ $voices
           rag_rm "$key" "$arg"
           reply_text "$to" "✅ 已删除 $arg" ;;
         *) reply_text "$to" "用法：/rag list | on | off | add <名字> <内容> | rm <名字>
-提示：往 ~/wxbot-state/rag/$key/ 或 _global/ 直接放 .txt/.md 文件也可" ;;
+提示：往 \$BOT_HOME/rag/$key/ 或 _global/ 直接放 .txt/.md 文件也可" ;;
       esac
       return 0 ;;
 

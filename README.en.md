@@ -1,7 +1,6 @@
 # mini_bot
 
-> A bash chat bot.
-> Plug your **WeChat** or **Lark (Feishu)** account into a CLI LLM (default `qoder-cli`); users chat in IM, the bot replies.
+> A bash chat bot. Plug **WeChat** or **Lark (Feishu)** into qoder-cli (or any CLI LLM); users chat in IM, the bot replies.
 >
 > 中文：[README.md](./README.md)
 
@@ -9,34 +8,33 @@
 
 ## 0. What it does
 
-- You send a message in WeChat/Lark → bot calls qoder-cli → you get an AI reply.
-- Context auto-continues. `/reset` starts a new conversation.
-- Accepts text, images, video, audio, files as input.
-- Bonus built-in: cron reminders, long-term memory, image gen, TTS, web search, multi-account, auto backups.
-- Tiny web dashboard for messages, usage, backup downloads.
+- Send a message in WeChat/Lark → bot calls qoder-cli → you get an AI reply.
+- Context auto-continues; `/reset` starts fresh.
+- Accepts text, images, video, audio, files.
+- Built-in: cron reminders, long-term memory, image gen, TTS, web search, multi-account, auto backups.
+- Tiny web dashboard.
 
 ---
 
-## 1. Three-minute start (WeChat only)
+## 1. Three minutes to run (WeChat only)
 
 ```bash
 # 1) clone
-git clone git@github.com:hlx1996/mini_bot.git ~/mini_bot
-cd ~/mini_bot
+git clone git@github.com:hlx1996/mini_bot.git
+cd mini_bot
 
-# 2) install wxlink (WeChat bridge), log in once
+# 2) install wxlink deps, log in once
 pip install --user wechat-clawbot
-python3 -m wxlink login          # scan QR with your phone
+python3 wxlink.py login           # scan QR with your phone
 
-# 3) configure account and run
-mkdir -p ~/wxbot-state
-echo "wechat:default" > ~/wxbot-state/accounts.list
+# 3) configure and start
+echo "wechat:default" > state/accounts.list   # state/ is created automatically
 bash bot.sh run
 ```
 
-Done. Open WeChat → message "File Transfer" → you'll get a reply.
+Open WeChat → message "File Transfer" → reply arrives = success.
 
-> Want a second WeChat account? `python3 -m wxlink login --account work`, then add `wechat:work` to `accounts.list`.
+> Second WeChat account? `python3 wxlink.py --account work login`, then add `wechat:work` to `state/accounts.list`.
 
 ---
 
@@ -45,18 +43,19 @@ Done. Open WeChat → message "File Transfer" → you'll get a reply.
 ```bash
 # 1) install lark-cli
 npm install -g @larksuiteoapi/lark-cli
-lark-cli auth login              # browser QR
+lark-cli auth login               # browser QR
 
-# 2) Create a "self-built app" on Lark open platform, get App ID/Secret
-#    https://open.feishu.cn/app
-#    Enable the Bot capability and subscribe event: im.message.receive_v1
+# 2) On https://open.feishu.cn/app create a "self-built app"
+#    - enable the Bot capability
+#    - subscribe event: im.message.receive_v1
+#    - copy App ID + App Secret
 
-# 3) Export creds (put in ~/.zshrc or ~/.bashrc)
+# 3) Export creds (put in ~/.zshrc)
 export LARK_APP_ID=cli_xxxxxxxxxxxxxxxx
 export LARK_APP_SECRET=xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
 
-# 4) Add an account line
-echo "lark:default" >> ~/wxbot-state/accounts.list
+# 4) Add account line
+echo "lark:default" >> state/accounts.list
 
 # 5) Restart
 bash bot.sh run
@@ -73,50 +72,72 @@ Then `@your-bot` in any Lark chat (or DM it).
 | `/reset` | Clear context, start fresh |
 | `/help` | Full command list |
 | `/lang zh` | Switch to Chinese (`/lang en` to switch back) |
-| `/soul cat` | Switch persona (`assistant` / `cat` / `editor` …) |
-| `/model claude` | Switch backend LLM |
+| `/soul cat` | Switch persona (`assistant`/`cat`/`editor`/…) |
+| `/model claude` | Switch backend LLM command |
 | `/search latest news` | Web search |
 | `/image a cyberpunk cat` | Generate image |
 | `/tts hello world` | Text to speech |
 | `/cron add "0 9 * * *" Good morning` | Daily reminder |
 | `/remember my birthday is May 1` | Long-term memory |
-| `/memory` | Show what's remembered |
-| `/forget` | Clear memory |
+| `/memory` / `/forget` | Show / clear memory |
 | `/backup` | Snapshot now |
 | `/usage day` | Today's usage stats |
 
-Send `/help` for the full list.
+`/help` for the full list.
 
 ---
 
-## 4. Web dashboard (optional)
+## 4. Where does data live?
+
+By default, in the **`state/` subdirectory of the repo** (`mini_bot/state/`, already gitignored).
+Override with:
+
+```bash
+export BOT_HOME=/some/other/path
+```
+
+Layout:
+
+```
+state/
+├── accounts.list
+├── sessions/
+├── memory/
+├── crons/
+├── downloads/
+├── backups/
+└── logs/
+```
+
+---
+
+## 5. Web dashboard (optional)
 
 ```bash
 python3 web.py --port 8088
 ```
 
-Open `http://127.0.0.1:8088` for the event stream, usage, backups.
+Open `http://127.0.0.1:8088`.
 
-Want a password?
+Add a password:
 
 ```bash
-export MINIBOT_USER=admin
-export MINIBOT_PASS=secret
+export MINIBOT_USER=admin MINIBOT_PASS=secret
 python3 web.py --port 8088
 ```
 
 ---
 
-## 5. A few advanced toggles
+## 6. Advanced toggles
 
-### Encrypt conversation + memory at rest
+### Encrypt conversations + memory at rest
 
 ```bash
 export MINIBOT_ENCRYPT_KEY="some-passphrase"
 bash bot.sh run
 ```
 
-Memory files on disk are AES-256 encrypted (`.enc` suffix). Unset the var to revert to plain files (zero migration).
+Files in `state/memory/` are AES-256 encrypted (`.enc` suffix). Unset the var to revert to plain files (zero migration).
 
 ### Prometheus + Grafana
 
@@ -127,40 +148,8 @@ Memory files on disk are AES-256 encrypted (`.enc` suffix). Unset the var to rev
 ```bash
 docker build -t mini_bot .
 docker run -d --name mini_bot -p 8088:8088 \
-  -v ~/wxbot-state:/data -e BOT_HOME=/data \
+  -v $(pwd)/state:/app/state \
   mini_bot
-```
-
----
-
-## 6. Where everything lives
-
-Code:
-
-```
-mini_bot/
-├── bot.sh         # main loop
-├── web.py         # dashboard
-├── live-smoke.sh  # 28-test suite
-├── backup.sh      # export/import
-└── lib/
-    ├── lark.sh
-    ├── agents.sh
-    ├── tts.sh
-    └── crypt.sh
-```
-
-Data (default `~/wxbot-state/`):
-
-```
-~/wxbot-state/
-├── accounts.list
-├── sessions/
-├── memory/
-├── crons/
-├── downloads/
-├── backups/
-└── logs/
 ```
 
 ---
@@ -177,11 +166,12 @@ Example:
 
 ```
 wechat:default
-wechat:work          assistant   qoder-cli
-lark:lark_main       cat         qoder-cli
+wechat:work         assistant   qoder-cli
+lark:lark_main      cat         qoder-cli
 ```
 
-`platform`: `wechat` or `lark`. `soul` / `model` optional.
+- `platform`: `wechat` or `lark`
+- `soul` / `model` optional
 
 ---
 
@@ -189,7 +179,7 @@ lark:lark_main       cat         qoder-cli
 
 | Var | Purpose |
 |---|---|
-| `BOT_HOME` | Data dir (default `~/wxbot-state`) |
+| `BOT_HOME` | Data dir (default `<repo>/state`) |
 | `MINIBOT_MODEL` | Default LLM command (default `qoder-cli`) |
 | `MINIBOT_USER` / `MINIBOT_PASS` | Dashboard Basic Auth |
 | `MINIBOT_ENCRYPT_KEY` | Enable at-rest encryption |
@@ -198,13 +188,13 @@ lark:lark_main       cat         qoder-cli
 
 ---
 
-## 9. Tests / CI
+## 9. Tests
 
 ```bash
 bash live-smoke.sh    # expect PASS: 28  FAIL: 0
 ```
 
-GitHub Actions: `.github/workflows/ci.yml`.
+CI in `.github/workflows/ci.yml`.
 
 ---
 

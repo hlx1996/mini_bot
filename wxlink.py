@@ -82,7 +82,7 @@ LONG_POLL_TIMEOUT_MS = 35_000
 def _account_home(name: str) -> Path:
     """Per-account fake HOME so wechat-clawbot's credentials_dir() resolves
     to an isolated directory. Lets one machine host multiple WeChat accounts."""
-    base = Path(os.environ.get("WXBOT_HOME", str(Path.home() / "wxbot-state")))
+    base = Path(os.environ.get("WXBOT_HOME", os.environ.get("BOT_HOME", str(Path(__file__).resolve().parent / "state"))))
     return base / "accounts" / name / "home"
 
 
@@ -411,7 +411,7 @@ def cmd_send_media(args: argparse.Namespace) -> int:
 
 def cmd_accounts(_args: argparse.Namespace) -> int:
     """List known account profiles (those with a saved credentials file)."""
-    base = Path(os.environ.get("WXBOT_HOME", str(Path.home() / "wxbot-state"))) / "accounts"
+    base = Path(os.environ.get("WXBOT_HOME", os.environ.get("BOT_HOME", str(Path(__file__).resolve().parent / "state")))) / "accounts"
     rows = []
     if base.is_dir():
         for d in sorted(base.iterdir()):
@@ -439,8 +439,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("accounts", help="list known account profiles").set_defaults(fn=cmd_accounts)
 
     ps = sub.add_parser("subscribe", help="long-poll inbound messages, emit NDJSON")
-    ps.add_argument("--download-dir", default=str(Path.home() / "wxbot-state" / "downloads"),
-                    help="where to save downloaded media (default: ~/wxbot-state/downloads)")
+    ps.add_argument("--download-dir", default=str(Path(__file__).resolve().parent / "state" / "downloads"),
+                    help="where to save downloaded media (default: <repo>/state/downloads)")
     ps.set_defaults(fn=cmd_subscribe)
 
     pt = sub.add_parser("send-text", help="send a text message")

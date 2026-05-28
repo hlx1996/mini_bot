@@ -4,7 +4,7 @@
 Usage:
   python3 ~/wxweb.py                       # serve on http://127.0.0.1:8765
   python3 ~/wxweb.py --port 9000 --host 0.0.0.0
-  BOT_HOME=/tmp/wxbot-test python3 ~/wxweb.py
+  BOT_HOME=/tmp/wxbot-test python3 ~/mini_bot/web.py
 
 Endpoints:
   GET /                  -> dashboard HTML (single page, auto-refreshes)
@@ -19,7 +19,7 @@ import argparse, base64, hashlib, hmac, http.client, http.cookies, http.server, 
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
-BOT_HOME      = Path(os.environ.get("BOT_HOME", str(Path.home() / "wxbot-state")))
+BOT_HOME      = Path(os.environ.get("BOT_HOME", str(Path(__file__).resolve().parent / "state")))
 LOG_DIR       = BOT_HOME / "logs"
 SESS_DIR      = BOT_HOME / "sessions"
 WORK_ROOT     = BOT_HOME / "workspaces"
