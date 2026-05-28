@@ -87,106 +87,19 @@ lark_subscribe_loop() {
     sleep 60
     return 0
   }
+  # Clean stale single-instance lock left by previous lark-cli (no process holds it but file present blocks subscribe)
+  local _lock_dir="$HOME/.lark-cli/locks"
+  if [[ -d "$_lock_dir" ]]; then
+    for _lf in "$_lock_dir"/subscribe_*.lock; do
+      [[ -e "$_lf" ]] || continue
+      if ! lsof "$_lf" >/dev/null 2>&1; then
+        rm -f "$_lf"
+      fi
+    done
+  fi
+  local parser="${BASH_SOURCE[0]%/*}/lark_event_parser.py"
   lark-cli event +subscribe \
     --as "$as" \
     --event-types im.message.receive_v1 \
-  | "$PYTHON_BIN" <(cat <<'PY'
-import sys, json, os, subprocess, traceback
-acct = sys.argv[1]
-dl_dir = sys.argv[2]
-as_id  = sys.argv[3]
-def _process(line):
-    try:
-        ev = json.loads(line)
-    except Exception:
-        return
-    if ev.get("header", {}).get("event_type") != "im.message.receive_v1":
-        return
-    msg = ev.get("event", {}).get("message", {}) or {}
-    sender_obj = ev.get("event", {}).get("sender", {}) or {}
-    sender = sender_obj.get("sender_id") or {}
-    if not isinstance(sender, dict): sender = {}
-    mtype = msg.get("message_type")
-    raw = msg.get("content") or "{}"
-    try: content = json.loads(raw)
-    except Exception: content = {}
-    text = ""
-    media = []
-    if mtype == "text":
-        text = content.get("text", "")
-    elif mtype == "image":
-        ikey = content.get("image_key")
-        if ikey:
-            fpath = os.path.join(dl_dir, f"{ikey}.jpg")
-            try:
-                subprocess.run(["lark-cli","im","+messages-resources-download",
-                    "--message-id", msg.get("message_id",""),
-                    "--file-key", ikey, "--type", "image",
-                    "--output", os.path.basename(fpath), "--as", as_id],
-                    cwd=dl_dir, check=False,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=30)
-                if os.path.exists(fpath):
-                    media.append({"kind":"image","path":fpath})
-            except Exception: pass
-    elif mtype == "post":
-        title = content.get("title","")
-        texts = []
-        for row in content.get("content",[]):
-            for el in row:
-                if el.get("tag") == "text":
-                    texts.append(el.get("text",""))
-        text = "\n".join([t for t in [title]+texts if t])
-    elif mtype == "file" or mtype == "audio" or mtype == "media":
-        fkey = content.get("file_key")
-        if fkey:
-            fpath = os.path.join(dl_dir, f"{fkey}")
-            try:
-                subprocess.run(["lark-cli","im","+messages-resources-download",
-                    "--message-id", msg.get("message_id",""),
-                    "--file-key", fkey, "--type", "file",
-                    "--output", os.path.basename(fpath), "--as", as_id],
-                    cwd=dl_dir, check=False,
-                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                    timeout=60)
-                if os.path.exists(fpath):
-                    kind = "audio" if mtype=="audio" else ("video" if mtype=="media" else "file")
-                    media.append({"kind":kind,"path":fpath})
-            except Exception: pass
-    else:
-        return
-    mentions = msg.get("mentions") or ev.get("event",{}).get("mentions") or []
-    out = {
-        "type":"message",
-        "platform":"lark",
-        "id": msg.get("message_id",""),
-        "from": msg.get("chat_id",""),
-        "from_name": sender.get("user_id") or sender.get("open_id",""),
-        "from_open_id": sender.get("open_id",""),
-        "chat_type": "group" if msg.get("chat_type")=="group" else "direct",
-        "account_id": acct,
-        "account_name": acct,
-        "text": text,
-        "mentioned": bool(mentions),
-        "media": media,
-        "reply_to": msg.get("message_id",""),
-    }
-    try:
-        sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
-        sys.stdout.flush()
-    except BrokenPipeError:
-        os._exit(0)
-
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
-    try:
-        _process(line)
-    except BrokenPipeError:
-        os._exit(0)
-    except Exception:
-        sys.stderr.write("[lark-parse-error] " + traceback.format_exc() + "\n")
-        sys.stderr.flush()
-PY
-) "$acct" "$lark_dl" "$as"
+  | "$PYTHON_BIN" "$parser" "$acct" "$lark_dl" "$as"
 }
