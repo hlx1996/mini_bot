@@ -841,3 +841,67 @@ bash live-smoke.sh    # 13 个场景 / 19 个断言
     ├── mute.list  admins.list  whitelist.list  welcomed.list
     └── mcp.json (optional)
 ```
+
+---
+
+## 19. v7：GitHub OAuth / CI / i18n / /usage
+
+### 19.1 Web 面板：GitHub OAuth 登录
+
+三档鉴权，按环境变量优先级自动选择：
+
+| 配置的 env | 模式 |
+|---|---|
+| `MINIBOT_GH_CLIENT_ID` + `MINIBOT_GH_CLIENT_SECRET` | **GitHub OAuth**（推荐）— 浏览器跳 GitHub 授权 → cookie session |
+| `MINIBOT_USER` + `MINIBOT_PASS`                    | **HTTP Basic Auth** |
+| *(都不设)*                                          | **开放**（只建议 loopback） |
+
+可选白名单：`MINIBOT_GH_ALLOWED_USERS=hlx1996,foo,bar`（不在名单的 GitHub 用户登录后直接被拒）。
+
+OAuth App 创建步骤：
+1. https://github.com/settings/developers → New OAuth App
+2. Callback URL：`http://<your-host>:8787/oauth/callback`
+3. 把 Client ID / Secret 填到 docker-compose 的 environment 或 systemd 的 EnvironmentFile
+
+测试场景里走 `MINIBOT_OAUTH_MOCK=1` 短路 GitHub 调用，不需要真账号。
+
+### 19.2 GitHub Actions CI
+
+`.github/workflows/ci.yml` 每次 push / PR：
+- `bash -n` 全部 .sh + `python -m py_compile` 全部 .py
+- 跑 `live-smoke.sh`（13 场景 / 24 断言）
+- `docker build` 镜像构建烟测
+
+### 19.3 i18n（English /help）
+
+```
+/lang en       # switch to English (per-chat)
+/lang zh       # 切回中文
+/help          # uses current language
+```
+
+完整 English 文档：[README.en.md](./README.en.md)
+
+### 19.4 `/usage` 用量统计
+
+```
+/usage           # 默认今天
+/usage day
+/usage week
+/usage all
+```
+
+输出（基于 events.jsonl 实时聚合，无需额外存储）：
+- 总计收 / 发条数 + 字符总数
+- 按账号 Top
+- 按用户 Top10
+
+Web 面板也加了"用量"卡片，三档时间窗下拉切换 + 实时刷新。
+
+### 19.5 扩展后的 live-smoke
+
+```
+bash live-smoke.sh    # 16 场景 / 24 断言，全绿
+```
+
+新增：`/usage` 报表、`/lang en` + 英文 help、OAuth 未登录重定向、OAuth cookie 放行。

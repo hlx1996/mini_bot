@@ -934,6 +934,33 @@ handle_command() {
       return 0 ;;
 
     /help|/帮助)
+      if [[ "$(lang_get "$key")" == "en" ]]; then
+        reply_text "$to" "📖 mini_bot — commands
+
+— session —    /reset  /model [name]  /cancel  /status  /lang [en|zh]
+— soul —       /soul [list|<name>|show|save <name>=<text>]
+— memory —     /memory [add <text>|clear]
+— skills —     /skill list | /skill <name> [args…] | /skill show <name>
+— mcp —        /mcp [reload]
+— web —        /search <q>   /news <q>
+— image —      /image [n=N] [style=…] <prompt>
+— tts —        /tts on|off|engine|voice [name|-]|rate [n|-]
+— hooks —      /hooks
+— quota —      /quota [show|set <n>|reset]
+— groups —     /whitelist [list|add|rm <id>]  (admin)
+— admin —      /admin [list|add|rm <user>]    /say <user> <text>
+— cron —       /cron [list|rm <id>|addto <key> <expr> <prompt>|nl <text>]
+— v4 —         /cwd <abs-path> | /cwd clear
+— v5 —         /agent <soul> <task>
+                /team [show|set <r1> <r2>…|run <task>|clear]
+                /automem on|off
+— v6 —         /backup [create|list|restore <file>]   (admin)
+                /card <title>|<content>                (lark only)
+— v7 —         /usage [day|week|all]
+                /lang [en|zh]
+— misc —       /whoami  /export  /stats  /help"
+        return 0
+      fi
       reply_text "$to" "📖 wxbot 命令一览
 
 — 会话 —
@@ -974,6 +1001,8 @@ handle_command() {
   /automem on|off          每轮自动抽取事实存入 /memory
   /backup [list|create|restore <file>]  💾 备份/恢复（admin）
   /card <title>|<content>  🆕 Lark 富文本卡片回复
+  /usage [day|week|all]    📊 用量统计（按账号/用户）
+  /lang [en|zh]            🌐 切换 /help 语言
 
 — 本地项目 —                              🆕 v4
   /cwd <绝对路径>          把 qoder 工作目录锁到该项目
@@ -1172,6 +1201,19 @@ example：/team set researcher critic editor"
 
     /stats|/统计)
       handle_stats "$to"
+      return 0 ;;
+
+    /usage|/用量)
+      handle_usage "$to" "$rest"
+      return 0 ;;
+
+    /lang|/语言)
+      local nl="${rest%% *}"
+      case "$nl" in
+        en|zh) lang_set "$key" "$nl"; reply_text "$to" "$([ "$nl" = "en" ] && echo "🌐 Language set to English" || echo "🌐 语言已切换为中文")" ;;
+        ""|show) reply_text "$to" "current lang: $(lang_get "$key") — use /lang en | /lang zh" ;;
+        *) reply_text "$to" "用法：/lang [en|zh]" ;;
+      esac
       return 0 ;;
 
     /whitelist)
@@ -1609,6 +1651,55 @@ muted: $(wc -l <"$MUTE_FILE" 2>/dev/null | awk '{print $1}')
 admins: $(wc -l <"$ADMINS_FILE" 2>/dev/null | awk '{print $1}')
 whitelist: $(wc -l <"$WHITELIST_FILE" 2>/dev/null | awk '{print $1}')"
 }
+
+# /usage [day|week|all] — token/char accounting per account & per sender, computed from events.jsonl
+handle_usage() {
+  local to="$1" scope="${2:-day}"
+  local since
+  case "$scope" in
+    day)  since=$(( $(date +%s) - 86400 )) ;;
+    week) since=$(( $(date +%s) - 7*86400 )) ;;
+    all)  since=0 ;;
+    *)    since=$(( $(date +%s) - 86400 )); scope="day" ;;
+  esac
+  local report
+  report=$(jq -r --argjson t "$since" '
+    select((.ts // 0) >= $t)
+    | if .kind == "event" then
+        {acct: (.account_name // "?"), from: (.from_name // .from // "?"),
+         dir: "in",  chars: (.text | length // 0)}
+      elif .kind == "reply" then
+        {acct: "?", from: "(bot)",
+         dir: "out", chars: (.text | length // 0)}
+      else empty end
+    | [.acct, .from, .dir, .chars] | @tsv
+  ' "$EVENT_LOG" 2>/dev/null | awk -F'\t' '
+    { acct=$1; from=$2; dir=$3; chars=$4+0
+      ev_acct[acct]++; ch_acct[acct]+=chars
+      ev_from[from]++; ch_from[from]+=chars
+      if (dir=="in")  { total_in++;  ch_in  += chars }
+      else            { total_out++; ch_out += chars }
+    }
+    END {
+      printf "──── 总计 ────\n收: %d 条 / %d 字   发: %d 条 / %d 字\n\n", total_in, ch_in, total_out, ch_out
+      printf "──── 按账号 ────\n"
+      n=0; for (a in ev_acct) { arr[++n]=a }
+      for (i=1;i<=n;i++) for (j=i+1;j<=n;j++) if (ev_acct[arr[j]]>ev_acct[arr[i]]) { t=arr[i]; arr[i]=arr[j]; arr[j]=t }
+      for (i=1;i<=n && i<=10;i++) printf "  %s — %d 条 / %d 字\n", arr[i], ev_acct[arr[i]], ch_acct[arr[i]]
+      printf "\n──── 按用户 Top10 ────\n"
+      m=0; for (f in ev_from) { brr[++m]=f }
+      for (i=1;i<=m;i++) for (j=i+1;j<=m;j++) if (ev_from[brr[j]]>ev_from[brr[i]]) { t=brr[i]; brr[i]=brr[j]; brr[j]=t }
+      for (i=1;i<=m && i<=10;i++) printf "  %s — %d 条 / %d 字\n", brr[i], ev_from[brr[i]], ch_from[brr[i]]
+    }')
+  reply_text "$to" "📊 用量 ($scope)
+
+${report:-(无数据)}"
+}
+
+# ---------- i18n: per-chat language ----------
+lang_get() { local f="$SESS_DIR/$1.lang"; [[ -f "$f" ]] && cat "$f" || echo "zh"; }
+lang_set() { printf '%s' "$2" > "$SESS_DIR/$1.lang"; }
+
 
 handle_whitelist() {
   local to="$1" rest="$2"

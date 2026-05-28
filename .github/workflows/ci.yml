@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y bash jq curl python3 espeak-ng
+
+      - name: Syntax check (bash)
+        run: |
+          bash -n bot.sh
+          bash -n backup.sh
+          bash -n install.sh
+          bash -n live-smoke.sh
+          for f in lib/*.sh; do bash -n "$f"; done
+
+      - name: Syntax check (python)
+        run: |
+          python3 -m py_compile web.py wxlink.py
+
+      - name: live-smoke (stub-driven, 13 scenarios)
+        run: bash live-smoke.sh
+
+      - name: Docker build (smoke)
+        run: docker build -t minibot:ci .

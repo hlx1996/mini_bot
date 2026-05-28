@@ -202,6 +202,33 @@ kill $WPID 2>/dev/null || true
 if [[ "$code_noauth" == "401" ]]; then echo "  ✅ web rejects no-auth (401)"; PASS=$((PASS+1)); else echo "  ❌ expected 401, got $code_noauth"; FAIL=$((FAIL+1)); fi
 if [[ "$code_auth" == "200" ]]; then echo "  ✅ web accepts valid creds (200)"; PASS=$((PASS+1)); else echo "  ❌ expected 200, got $code_auth"; FAIL=$((FAIL+1)); fi
 
+echo "== Test 14: /usage command =="
+simulate '{"type":"message","platform":"wechat","id":"t14","from":"wxid_a","from_name":"a","chat_type":"direct","account_id":"acct1","account_name":"acct1","text":"/usage day","media":[]}'
+expect "/usage produces report" "(总计|按账号)" "$SMOKE_SENTLOG"
+
+echo "== Test 15: /lang en switch =="
+simulate '{"type":"message","platform":"wechat","id":"t15a","from":"wxid_a","from_name":"a","chat_type":"direct","account_id":"acct1","account_name":"acct1","text":"/lang en","media":[]}'
+expect "/lang en confirms" "(English|Language set)" "$SMOKE_SENTLOG"
+simulate '{"type":"message","platform":"wechat","id":"t15b","from":"wxid_a","from_name":"a","chat_type":"direct","account_id":"acct1","account_name":"acct1","text":"/help","media":[]}'
+expect "/help in English" "mini_bot — commands" "$SMOKE_SENTLOG"
+
+echo "== Test 16: OAuth mock login =="
+WEB_PORT2=$(python3 -c 'import socket;s=socket.socket();s.bind(("127.0.0.1",0));print(s.getsockname()[1]);s.close()')
+MINIBOT_GH_CLIENT_ID=mock MINIBOT_GH_CLIENT_SECRET=mock MINIBOT_OAUTH_MOCK=1 \
+  MINIBOT_OAUTH_MOCK_USER=hlx1996 MINIBOT_GH_ALLOWED_USERS=hlx1996 BOT_HOME="$BOT_HOME" \
+  python3 "$SCRIPT_DIR/web.py" --port "$WEB_PORT2" --host 127.0.0.1 >/dev/null 2>&1 &
+WPID2=$!
+sleep 1
+# unauth -> 302 to /login
+c1=$(curl -s -o /dev/null -w '%{http_code}' "http://127.0.0.1:$WEB_PORT2/api/status" || echo 0)
+# /oauth/callback returns 302 with Set-Cookie
+hdrs=$(curl -s -i "http://127.0.0.1:$WEB_PORT2/oauth/callback?code=fake" 2>&1)
+cookie=$(echo "$hdrs" | awk -F': ' '/^[Ss]et-[Cc]ookie:/{print $2}' | head -1 | cut -d';' -f1)
+c2=$(curl -s -o /dev/null -w '%{http_code}' --cookie "$cookie" "http://127.0.0.1:$WEB_PORT2/api/status" || echo 0)
+kill $WPID2 2>/dev/null || true
+if [[ "$c1" == "302" ]]; then echo "  ✅ unauth redirected (302)"; PASS=$((PASS+1)); else echo "  ❌ expected 302, got $c1"; FAIL=$((FAIL+1)); fi
+if [[ -n "$cookie" && "$c2" == "200" ]]; then echo "  ✅ mock-OAuth cookie grants access (200)"; PASS=$((PASS+1)); else echo "  ❌ oauth-cookie failed: cookie='$cookie' code=$c2"; FAIL=$((FAIL+1)); fi
+
 echo
 echo "============================================"
 echo " PASS: $PASS    FAIL: $FAIL"

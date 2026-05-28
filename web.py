@@ -15,7 +15,7 @@ Endpoints:
   GET /api/log?n=200     -> tail of bot.out
 """
 from __future__ import annotations
-import argparse, base64, http.server, json, os, re, socketserver, subprocess, sys, time
+import argparse, base64, hashlib, hmac, http.client, http.cookies, http.server, json, os, re, socketserver, subprocess, sys, time, urllib.parse, urllib.request
 from pathlib import Path
 from urllib.parse import urlparse, parse_qs
 
@@ -259,6 +259,46 @@ def list_backups() -> list[dict]:
     return out
 
 
+def usage_report(scope: str = "day") -> dict:
+    now = int(time.time())
+    since = {"day": now - 86400, "week": now - 7*86400, "all": 0}.get(scope, now - 86400)
+    if not EVENT_LOG.exists():
+        return {"scope": scope, "total_in": 0, "total_out": 0, "chars_in": 0, "chars_out": 0, "by_account": [], "by_user": []}
+    by_acct: dict[str, dict] = {}
+    by_from: dict[str, dict] = {}
+    total_in = total_out = chars_in = chars_out = 0
+    with EVENT_LOG.open("r") as f:
+        for ln in f:
+            try: e = json.loads(ln)
+            except Exception: continue
+            if e.get("ts", 0) < since: continue
+            chars = len(e.get("text") or "")
+            kind  = e.get("kind")
+            if kind == "event":
+                acct = e.get("account_name") or "?"
+                frm  = e.get("from_name") or e.get("from") or "?"
+                by_acct.setdefault(acct, {"in":0,"out":0,"chars":0})["in"] += 1
+                by_acct[acct]["chars"] += chars
+                by_from.setdefault(frm, {"count":0,"chars":0})
+                by_from[frm]["count"] += 1
+                by_from[frm]["chars"] += chars
+                total_in += 1; chars_in += chars
+            elif kind == "reply":
+                total_out += 1; chars_out += chars
+    def top(d, k1, k2, n=10):
+        return sorted(
+            [{"name": k, **v} for k, v in d.items()],
+            key=lambda r: r.get(k1, 0), reverse=True
+        )[:n]
+    return {
+        "scope": scope,
+        "total_in": total_in, "total_out": total_out,
+        "chars_in": chars_in, "chars_out": chars_out,
+        "by_account": top(by_acct, "in", "chars"),
+        "by_user":    top(by_from, "count", "chars"),
+    }
+
+
 def enqueue_command(payload: dict) -> dict:
     """Persist a command for the bot to process on the next tick.
     Returns {ok,id} or {ok:false,error}."""
@@ -351,6 +391,20 @@ button:hover{background:#2ea043}
       <input id="qs_text" placeholder="文本" style="background:#0d1117;border:1px solid #30363d;color:#e8eaed;padding:6px;border-radius:4px"/>
       <button onclick="qsSend()">发送</button>
       <div class="muted" id="qs_msg"></div>
+    </div>
+  </div>
+  <div class="card">
+    <h2>用量 / Usage <select id="us_scope" onchange="usRefresh()" style="background:#0d1117;border:1px solid #30363d;color:#e8eaed;font-size:11px"><option value="day">今天</option><option value="week">本周</option><option value="all">全部</option></select></h2>
+    <div id="us_total" class="muted" style="margin-bottom:6px"></div>
+    <div style="display:flex;gap:12px;align-items:flex-start">
+      <div style="flex:1">
+        <h3 style="font-size:12px;margin:4px 0;color:#8b949e">按账号</h3>
+        <table><thead><tr><th>账号</th><th>收</th><th>字</th></tr></thead><tbody id="us_acct"></tbody></table>
+      </div>
+      <div style="flex:1">
+        <h3 style="font-size:12px;margin:4px 0;color:#8b949e">按用户 Top10</h3>
+        <table><thead><tr><th>用户</th><th>条</th><th>字</th></tr></thead><tbody id="us_user"></tbody></table>
+      </div>
     </div>
   </div>
   <div class="card">
@@ -486,8 +540,15 @@ async function bkRestore(name){
   const j = await r.json();
   $("bk_msg").textContent = j.ok ? "✅ 已排队恢复" : ("❌ "+(j.error||""));
 }
-refresh(); bkRefresh();
-setInterval(()=>{ if($("auto").checked){ refresh(); bkRefresh(); } }, 3000);
+async function usRefresh(){
+  const scope = $("us_scope").value;
+  const u = await jget("/api/usage?scope="+scope);
+  $("us_total").textContent = `总计：收 ${u.total_in} 条 / ${u.chars_in} 字   发 ${u.total_out} 条 / ${u.chars_out} 字`;
+  $("us_acct").innerHTML = (u.by_account||[]).map(r=>`<tr><td>${esc(r.name)}</td><td>${r.in}</td><td>${r.chars}</td></tr>`).join("");
+  $("us_user").innerHTML = (u.by_user||[]).map(r=>`<tr><td>${esc(r.name)}</td><td>${r.count}</td><td>${r.chars}</td></tr>`).join("");
+}
+refresh(); bkRefresh(); usRefresh();
+setInterval(()=>{ if($("auto").checked){ refresh(); bkRefresh(); usRefresh(); } }, 3000);
 </script></body></html>
 """
 
@@ -497,32 +558,128 @@ class Handler(http.server.BaseHTTPRequestHandler):
     def log_message(self, fmt, *a):
         sys.stderr.write("[%s] %s\n" % (self.log_date_time_string(), fmt % a))
 
-    # ---- Basic Auth (enabled when MINIBOT_USER set) ----
-    def _auth_ok(self) -> bool:
+    # ---- Auth backends (priority: OAuth > Basic > open) ----
+    @staticmethod
+    def _cookie_secret() -> bytes:
+        s = os.environ.get("MINIBOT_COOKIE_SECRET")
+        if s: return s.encode("utf-8")
+        # ephemeral per-process; logins survive within one server run only
+        if not hasattr(Handler, "_eph_secret"):
+            Handler._eph_secret = os.urandom(32)
+        return Handler._eph_secret
+
+    @staticmethod
+    def _sign(value: str) -> str:
+        m = hmac.new(Handler._cookie_secret(), value.encode("utf-8"), hashlib.sha256).hexdigest()[:16]
+        return f"{value}.{m}"
+
+    @staticmethod
+    def _verify(signed: str) -> str | None:
+        if not signed or "." not in signed: return None
+        v, m = signed.rsplit(".", 1)
+        if hmac.compare_digest(m, hmac.new(Handler._cookie_secret(), v.encode("utf-8"), hashlib.sha256).hexdigest()[:16]):
+            return v
+        return None
+
+    def _cookie_user(self) -> str | None:
+        c = http.cookies.SimpleCookie(self.headers.get("Cookie", ""))
+        if "minibot_user" in c:
+            return self._verify(c["minibot_user"].value)
+        return None
+
+    def _basic_auth_ok(self) -> bool:
         user = os.environ.get("MINIBOT_USER", "")
-        if not user:
-            return True
+        if not user: return False
         pwd = os.environ.get("MINIBOT_PASS", "")
         h = self.headers.get("Authorization", "")
-        if not h.startswith("Basic "):
-            return False
-        try:
-            raw = base64.b64decode(h[6:]).decode("utf-8", "ignore")
-        except Exception:
-            return False
-        if ":" not in raw:
-            return False
+        if not h.startswith("Basic "): return False
+        try: raw = base64.b64decode(h[6:]).decode("utf-8", "ignore")
+        except Exception: return False
+        if ":" not in raw: return False
         u, p = raw.split(":", 1)
         return u == user and p == pwd
 
+    def _auth_mode(self) -> str:
+        if os.environ.get("MINIBOT_GH_CLIENT_ID"): return "oauth"
+        if os.environ.get("MINIBOT_USER"):         return "basic"
+        return "open"
+
     def _require_auth(self) -> bool:
-        if self._auth_ok():
+        mode = self._auth_mode()
+        if mode == "open":
             return True
-        self.send_response(401)
-        self.send_header("WWW-Authenticate", 'Basic realm="mini_bot"')
+        if mode == "basic":
+            if self._basic_auth_ok(): return True
+            self.send_response(401)
+            self.send_header("WWW-Authenticate", 'Basic realm="mini_bot"')
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return False
+        # oauth
+        if self._cookie_user():
+            return True
+        # allow login routes through
+        path = urlparse(self.path).path
+        if path in ("/login", "/oauth/callback", "/logout"):
+            return True
+        self.send_response(302)
+        self.send_header("Location", "/login")
         self.send_header("Content-Length", "0")
         self.end_headers()
         return False
+
+    def _do_login(self):
+        client_id = os.environ.get("MINIBOT_GH_CLIENT_ID", "")
+        if not client_id:
+            return self._html("<p>OAuth disabled.</p>")
+        url = "https://github.com/login/oauth/authorize?" + urllib.parse.urlencode({
+            "client_id": client_id,
+            "scope": "read:user",
+        })
+        body = f'<p>Sign in with GitHub:</p><p><a href="{url}">→ Authorize mini_bot</a></p>'
+        self._html(f"<!doctype html><html><body style='font:14px sans-serif;padding:40px'>{body}</body></html>")
+
+    def _do_oauth_callback(self, q):
+        # MINIBOT_OAUTH_MOCK=1 short-circuits the GitHub round-trip for tests/dev.
+        if os.environ.get("MINIBOT_OAUTH_MOCK") == "1":
+            user = os.environ.get("MINIBOT_OAUTH_MOCK_USER", "mockuser")
+        else:
+            code = (q.get("code") or [""])[0]
+            if not code: return self._html("<p>missing code</p>")
+            try:
+                token = self._gh_exchange_code(code)
+                user  = self._gh_fetch_user(token) if token else ""
+            except Exception as e:
+                return self._html(f"<p>oauth failed: {e}</p>")
+        allowed = [u.strip() for u in os.environ.get("MINIBOT_GH_ALLOWED_USERS","").split(",") if u.strip()]
+        if allowed and user not in allowed:
+            return self._html(f"<p>User <code>{user}</code> not in allowlist.</p>")
+        cookie = self._sign(user)
+        self.send_response(302)
+        self.send_header("Location", "/")
+        self.send_header("Set-Cookie", f"minibot_user={cookie}; HttpOnly; Path=/; Max-Age=86400")
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    @staticmethod
+    def _gh_exchange_code(code: str) -> str:
+        data = urllib.parse.urlencode({
+            "client_id":     os.environ.get("MINIBOT_GH_CLIENT_ID",""),
+            "client_secret": os.environ.get("MINIBOT_GH_CLIENT_SECRET",""),
+            "code":          code,
+        }).encode("utf-8")
+        req = urllib.request.Request("https://github.com/login/oauth/access_token",
+            data=data, headers={"Accept":"application/json"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            j = json.loads(r.read().decode("utf-8"))
+        return j.get("access_token","")
+
+    @staticmethod
+    def _gh_fetch_user(token: str) -> str:
+        req = urllib.request.Request("https://api.github.com/user",
+            headers={"Authorization": f"Bearer {token}", "User-Agent":"mini_bot"})
+        with urllib.request.urlopen(req, timeout=10) as r:
+            return json.loads(r.read().decode("utf-8")).get("login","")
 
     def _json(self, obj, code=200):
         body = json.dumps(obj, ensure_ascii=False, default=str).encode("utf-8")
@@ -546,6 +703,14 @@ class Handler(http.server.BaseHTTPRequestHandler):
         u = urlparse(self.path)
         q = parse_qs(u.query)
         try:
+            if u.path == "/login":           return self._do_login()
+            if u.path == "/oauth/callback":  return self._do_oauth_callback(q)
+            if u.path == "/logout":
+                self.send_response(302)
+                self.send_header("Location","/login")
+                self.send_header("Set-Cookie","minibot_user=; Max-Age=0; Path=/")
+                self.send_header("Content-Length","0")
+                self.end_headers(); return
             if u.path == "/":              return self._html(INDEX_HTML)
             if u.path == "/api/status":    return self._json(status())
             if u.path == "/api/sessions":  return self._json(sessions())
@@ -553,6 +718,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
             if u.path == "/api/crons":     return self._json(crons())
             if u.path == "/api/accounts":  return self._json(accounts())
             if u.path == "/api/backups":   return self._json(list_backups())
+            if u.path == "/api/usage":     return self._json(usage_report(q.get("scope",["day"])[0]))
             if u.path == "/api/log":
                 n = int(q.get("n",[200])[0])
                 return self._json({"lines": tail(BOT_OUT, n)})
