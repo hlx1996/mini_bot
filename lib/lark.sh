@@ -70,7 +70,10 @@ lark_reply_card() {
 
 lark_reply_media() {
   local message_id="$1" file="$2"
-  local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
+  # User identity often lacks im:resource:upload; bot identity has it.
+  # Try bot first for media uploads, fall back to whatever lark_as_for returns.
+  local as=bot
+  lark-cli auth status >/dev/null 2>&1 || as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
   # lark-cli +messages-reply accepts only cwd-relative paths (rejects absolute
   # and ..), so cd to the file's dir and pass basename.
   local dir base; dir=$(dirname "$file"); base=$(basename "$file")

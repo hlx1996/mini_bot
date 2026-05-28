@@ -81,3 +81,69 @@ skill_route_for_text() {
   done
   return 1
 }
+
+# ---------- /agent /team auto-routing ----------
+# 文件 $SESS_DIR/<key>.agent_routes 或 $BOT_HOME/agent_routes.tsv
+# 每行 TAB-separated：<regex>\t<spec>
+#   spec = "agent:<soul-name>"   命中 → /agent <soul> <原文>
+#        = "team"                命中 → /team run <原文>
+_agent_routes_file_chat()   { printf '%s' "$SESS_DIR/$1.agent_routes"; }
+_agent_routes_file_global() { printf '%s' "$BOT_HOME/agent_routes.tsv"; }
+
+agent_routes_list() {
+  local key="$1" f1 f2 n=0
+  f1=$(_agent_routes_file_chat "$key"); f2=$(_agent_routes_file_global)
+  if [[ -s "$f1" ]]; then
+    echo "[本会话]"
+    while IFS=$'\t' read -r rx spec; do n=$((n+1)); printf '  %d. %s → %s\n' "$n" "$rx" "$spec"; done <"$f1"
+  fi
+  if [[ -s "$f2" ]]; then
+    echo "[全局]"
+    while IFS=$'\t' read -r rx spec; do n=$((n+1)); printf '  %d. %s → %s\n' "$n" "$rx" "$spec"; done <"$f2"
+  fi
+  (( n == 0 )) && echo "(还没有规则。/agent route add <regex> <agent:<soul>|team> [global])"
+}
+
+agent_routes_add() {
+  local key="$1" rx="$2" spec="$3" scope="${4:-chat}"
+  local f
+  [[ "$scope" == "global" ]] && f=$(_agent_routes_file_global) || f=$(_agent_routes_file_chat "$key")
+  mkdir -p "$(dirname "$f")"
+  printf '%s\t%s\n' "$rx" "$spec" >>"$f"
+}
+
+agent_routes_rm() {
+  local key="$1" idx="$2" n=0 f tmp
+  for f in "$(_agent_routes_file_chat "$key")" "$(_agent_routes_file_global)"; do
+    [[ -s "$f" ]] || continue
+    local lines; lines=$(wc -l <"$f" | tr -d ' ')
+    if (( idx > n && idx <= n + lines )); then
+      local local_idx=$((idx - n))
+      tmp=$(mktemp); awk -v k="$local_idx" 'NR!=k' "$f" >"$tmp"; mv "$tmp" "$f"
+      return 0
+    fi
+    n=$((n + lines))
+  done
+  return 1
+}
+
+agent_routes_clear() {
+  local key="$1" scope="${2:-chat}"
+  if [[ "$scope" == "global" ]]; then rm -f "$(_agent_routes_file_global)"
+  elif [[ "$scope" == "all" ]]; then rm -f "$(_agent_routes_file_chat "$key")" "$(_agent_routes_file_global)"
+  else rm -f "$(_agent_routes_file_chat "$key")"; fi
+}
+
+# Returns the spec (agent:<name> or team) that matches, or empty.
+agent_route_for_text() {
+  local key="$1" text="$2"
+  local f
+  for f in "$(_agent_routes_file_chat "$key")" "$(_agent_routes_file_global)"; do
+    [[ -s "$f" ]] || continue
+    while IFS=$'\t' read -r rx spec; do
+      [[ -z "$rx" || -z "$spec" ]] && continue
+      if printf '%s' "$text" | grep -Eq -- "$rx"; then printf '%s' "$spec"; return 0; fi
+    done <"$f"
+  done
+  return 1
+}

@@ -166,16 +166,18 @@ reply_text() {
 reply_media() {
   local to="$1" file="$2" caption="${3:-}"
   local platform="${G_PLATFORM:-wechat}"
+  local rc=0
   case "$platform" in
     lark|feishu)
-      lark_reply_media "$to" "$file"
-      [[ -n "$caption" ]] && lark_reply_text "$to" "$caption" || true
+      lark_reply_media "$to" "$file" || rc=$?
+      if [[ -n "$caption" ]]; then lark_reply_text "$to" "$caption" || true; fi
       ;;
     *)
       wxlink send-media --to "$to" --file "$file" ${caption:+--caption "$caption"} \
-        >/dev/null 2>>"$LOG_DIR/reply.err"
+        >/dev/null 2>>"$LOG_DIR/reply.err" || rc=$?
       ;;
   esac
+  return $rc
 }
 
 ###############################################################################
@@ -489,10 +491,23 @@ memory_search() {
   [[ -z "$kw" ]] && return 1
   local cf; cf=$(memory_path "$key")
   local gf; gf=$(memory_path_global)
+  # 1) exact substring grep (cheap, exact)
   local out=""
   local c; c=$(enc_read "$cf"); [[ -n "$c" ]] && out+=$(printf '%s' "$c" | grep -F -i -- "$kw" 2>/dev/null || true)$'\n'
   local g; g=$(enc_read "$gf"); [[ -n "$g" ]] && out+=$(printf '%s' "$g" | grep -F -i -- "$kw" 2>/dev/null | sed 's/^/[GLOBAL] /' || true)$'\n'
-  printf '%s' "$out" | awk 'NF'
+  out=$(printf '%s' "$out" | awk 'NF')
+  if [[ -n "$out" ]]; then printf '%s' "$out"; return 0; fi
+  # 2) semantic fallback: BM25 + char-bigram rank (pure stdlib python)
+  local py="$SCRIPT_DIR/lib/memory_search.py"
+  if [[ -f "$py" ]] && command -v python3 >/dev/null 2>&1; then
+    # Pass plaintext: if encrypted, decrypt to tmp first
+    local tmp_cf="" tmp_gf=""
+    if [[ -n "$c" ]]; then tmp_cf=$(mktemp -t mb_chat); printf '%s' "$c" > "$tmp_cf"; fi
+    if [[ -n "$g" ]]; then tmp_gf=$(mktemp -t mb_global); printf '%s' "$g" > "$tmp_gf"; fi
+    python3 "$py" "$kw" ${tmp_cf:+"$tmp_cf"} ${tmp_gf:+"$tmp_gf"} 2>/dev/null
+    [[ -n "$tmp_cf" ]] && rm -f "$tmp_cf"
+    [[ -n "$tmp_gf" ]] && rm -f "$tmp_gf"
+  fi
 }
 
 # ---------- skills ----------
@@ -1377,6 +1392,44 @@ qoder 现在会读写该目录里的文件。"
       return 0 ;;
 
     /agent)
+      # /agent route ...  — route management subcommand
+      if [[ "${rest%% *}" == "route" || "${rest%% *}" == "routes" ]]; then
+        local rargs="${rest#route}"; rargs="${rargs# routes}"; rargs="${rargs# }"
+        local rsub="${rargs%% *}" rrest=""
+        [[ "$rargs" != "$rsub" ]] && rrest="${rargs#* }"
+        case "$rsub" in
+          ""|list|ls)
+            reply_text "$to" "🎯 Agent/Team 自动路由：
+$(agent_routes_list "$key")
+
+用法：
+  /agent route add <regex> agent:<soul>  [global]
+  /agent route add <regex> team          [global]
+  /agent route rm <序号>
+  /agent route clear [global|all]
+示例：/agent route add '深入研究|帮我查' agent:researcher global" ;;
+          add)
+            local rx="${rrest%% *}" tail="${rrest#* }"
+            local spec="${tail%% *}" scope="${tail#* }"
+            [[ "$tail" == "$spec" ]] && scope=""
+            [[ -z "$rx" || -z "$spec" || "$rrest" == "$rx" ]] && { reply_text "$to" "用法：/agent route add <regex> agent:<soul>|team [global]"; return 0; }
+            local sc="chat"; [[ "$scope" == "global" ]] && sc="global"
+            agent_routes_add "$key" "$rx" "$spec" "$sc"
+            reply_text "$to" "✅ 已加 $sc 路由：/$rx/ → $spec" ;;
+          rm|del|remove)
+            [[ "$rrest" =~ ^[0-9]+$ ]] || { reply_text "$to" "用法：/agent route rm <序号>"; return 0; }
+            if agent_routes_rm "$key" "$rrest"; then reply_text "$to" "✅ 已删除规则 #$rrest"
+            else reply_text "$to" "❌ 序号不存在"; fi ;;
+          clear)
+            local sc="chat"
+            [[ "$rrest" == "global" ]] && sc="global"
+            [[ "$rrest" == "all" ]] && sc="all"
+            agent_routes_clear "$key" "$sc"
+            reply_text "$to" "🧹 已清空 ($sc) 路由" ;;
+          *) reply_text "$to" "未知子命令：/agent route $rsub" ;;
+        esac
+        return 0
+      fi
       # /agent <soul-name> <task>  — one-off persona run, isolated session.
       local sub_soul="${rest%% *}"; local sub_task="${rest#"$sub_soul"}"; sub_task="${sub_task# }"
       if [[ -z "$sub_soul" || -z "$sub_task" ]]; then
@@ -2891,6 +2944,20 @@ handle_event() {
     if _sk=$(skill_route_for_text "$key" "$G_TEXT") && [[ -n "$_sk" ]]; then
       log "SKILL-ROUTE key=$key '${G_TEXT:0:40}' -> $_sk"
       G_SKILL_OVERRIDE="$_sk"
+    fi
+  fi
+
+  # Trigger-keyword agent/team routing: rewrite G_TEXT to /agent or /team run.
+  # Per-chat rules first, then global. See /agent route, lib/skill_router.sh.
+  if [[ -n "$G_TEXT" ]] && [[ "$G_TEXT" != /* ]] \
+     && command -v agent_route_for_text >/dev/null 2>&1; then
+    local _spec
+    if _spec=$(agent_route_for_text "$key" "$G_TEXT") && [[ -n "$_spec" ]]; then
+      log "AGENT-ROUTE key=$key '${G_TEXT:0:40}' -> $_spec"
+      case "$_spec" in
+        agent:*) G_TEXT="/agent ${_spec#agent:} $G_TEXT" ;;
+        team)    G_TEXT="/team run $G_TEXT" ;;
+      esac
     fi
   fi
 
