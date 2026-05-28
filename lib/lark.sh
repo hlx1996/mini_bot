@@ -90,23 +90,22 @@ lark_subscribe_loop() {
   lark-cli event +subscribe \
     --as "$as" \
     --event-types im.message.receive_v1 \
-    --quiet \
   | "$PYTHON_BIN" <(cat <<'PY'
-import sys, json, os, subprocess
+import sys, json, os, subprocess, traceback
 acct = sys.argv[1]
 dl_dir = sys.argv[2]
 as_id  = sys.argv[3]
-for line in sys.stdin:
-    line = line.strip()
-    if not line: continue
+def _process(line):
     try:
         ev = json.loads(line)
     except Exception:
-        continue
+        return
     if ev.get("header", {}).get("event_type") != "im.message.receive_v1":
-        continue
-    msg = ev.get("event", {}).get("message", {})
-    sender = ev.get("event", {}).get("sender", {}).get("sender_id", {})
+        return
+    msg = ev.get("event", {}).get("message", {}) or {}
+    sender_obj = ev.get("event", {}).get("sender", {}) or {}
+    sender = sender_obj.get("sender_id") or {}
+    if not isinstance(sender, dict): sender = {}
     mtype = msg.get("message_type")
     raw = msg.get("content") or "{}"
     try: content = json.loads(raw)
@@ -155,7 +154,7 @@ for line in sys.stdin:
                     media.append({"kind":kind,"path":fpath})
             except Exception: pass
     else:
-        continue
+        return
     mentions = msg.get("mentions") or ev.get("event",{}).get("mentions") or []
     out = {
         "type":"message",
@@ -172,7 +171,22 @@ for line in sys.stdin:
         "media": media,
         "reply_to": msg.get("message_id",""),
     }
-    print(json.dumps(out, ensure_ascii=False), flush=True)
+    try:
+        sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        os._exit(0)
+
+for line in sys.stdin:
+    line = line.strip()
+    if not line: continue
+    try:
+        _process(line)
+    except BrokenPipeError:
+        os._exit(0)
+    except Exception:
+        sys.stderr.write("[lark-parse-error] " + traceback.format_exc() + "\n")
+        sys.stderr.flush()
 PY
 ) "$acct" "$lark_dl" "$as"
 }
