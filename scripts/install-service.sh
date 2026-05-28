@@ -270,7 +270,17 @@ linux_install() {
     return
   fi
   local user_path; user_path=$(get_user_path)
-  cat > "$UNIT_FILE" <<UNIT
+  local tpl="$REPO_DIR/scripts/systemd/mini_bot.service.template"
+  if [[ -f "$tpl" ]]; then
+    sed -e "s|__REPO__|$REPO_DIR|g" \
+        -e "s|__HOME__|$HOME|g" \
+        -e "s|__PATH__|$user_path|g" \
+        -e "s|__STATE__|$STATE_DIR|g" \
+        -e "s|__LOG__|$LOG_DIR|g" \
+        -e "s|__BASH__|$bash_bin|g" \
+        "$tpl" > "$UNIT_FILE"
+  else
+    cat > "$UNIT_FILE" <<UNIT
 [Unit]
 Description=mini_bot — WeChat + Lark bot powered by qodercli
 After=network-online.target
@@ -292,6 +302,7 @@ StandardError=append:$LOG_DIR/systemd.err
 [Install]
 WantedBy=default.target
 UNIT
+  fi
   systemctl --user daemon-reload
   systemctl --user enable --now "$SVC_NAME.service"
   # enable linger so service starts even before login
@@ -322,6 +333,41 @@ linux_restart() {
 }
 
 ##############################################################################
+# logrotate — install scripts/logrotate.d/mini_bot.template
+##############################################################################
+
+install_logrotate() {
+  local tpl="$REPO_DIR/scripts/logrotate.d/mini_bot.template"
+  [[ -f "$tpl" ]] || { echo "❌ template not found: $tpl"; exit 1; }
+  local user group
+  user="$(id -un)"
+  group="$(id -gn)"
+  local rendered
+  rendered=$(sed -e "s|__STATE__|$STATE_DIR|g" -e "s|__USER__|$user|g" -e "s|__GROUP__|$group|g" "$tpl")
+
+  if [[ -w /etc/logrotate.d ]] || sudo -n true 2>/dev/null; then
+    local dst=/etc/logrotate.d/mini_bot
+    echo "$rendered" | sudo tee "$dst" >/dev/null
+    echo "✅ system-wide logrotate installed: $dst"
+    echo "   test it: sudo logrotate -d $dst"
+  else
+    local cfg="$HOME/.config/mini_bot/logrotate.conf"
+    mkdir -p "$(dirname "$cfg")"
+    echo "$rendered" > "$cfg"
+    local state="$HOME/.cache/mini_bot.logrotate.state"
+    local lr; lr="$(command -v logrotate || echo /usr/sbin/logrotate)"
+    local entry="0 * * * * $lr --state $state $cfg >/dev/null 2>&1  # mini_bot logrotate"
+    if ! (crontab -l 2>/dev/null | grep -qF "mini_bot logrotate"); then
+      ( crontab -l 2>/dev/null; echo "$entry" ) | crontab -
+      echo "✅ user-mode logrotate installed: $cfg"
+      echo "   crontab entry added (hourly)."
+    else
+      echo "↺ user-mode logrotate already in crontab; config refreshed: $cfg"
+    fi
+  fi
+}
+
+##############################################################################
 # Dispatch
 ##############################################################################
 
@@ -336,5 +382,6 @@ case "$ACTION" in
   uninstall) ${fn}_uninstall ;;
   status)    ${fn}_status ;;
   restart)   ${fn}_restart ;;
-  *)         echo "Usage: $0 [install|uninstall|status|restart]"; exit 1 ;;
+  rotate)    install_logrotate ;;
+  *)         echo "Usage: $0 [install|uninstall|status|restart|rotate]"; exit 1 ;;
 esac

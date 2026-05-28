@@ -1,0 +1,17 @@
+# mini_bot logrotate config — install with scripts/install-service.sh --rotate
+# (which substitutes __STATE__ / __USER__ / __GROUP__ and drops into either
+# /etc/logrotate.d/mini_bot or, in user-mode, ~/.config/mini_bot/logrotate.conf
+# with an hourly user-cron entry).
+
+__STATE__/logs/*.out __STATE__/logs/*.err __STATE__/logs/events.jsonl {
+    daily
+    rotate 14
+    size 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    nocreate
+    su __USER__ __GROUP__
+}
