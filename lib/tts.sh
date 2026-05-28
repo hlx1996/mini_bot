@@ -27,7 +27,7 @@ tts_synthesize() {
       local -a args=()
       [[ -n "$voice" ]] && args+=(-v "$voice")
       [[ -n "$rate"  ]] && args+=(-r "$rate")
-      say "${args[@]}" -o "$out" -- "$text" 2>>"$LOG_DIR/tts.err" || return 1
+      say ${args[@]+"${args[@]}"} -o "$out" -- "$text" 2>>"$LOG_DIR/tts.err" || return 1
       # Try to convert to mp3 with ffmpeg for better WeChat compatibility
       if command -v ffmpeg >/dev/null 2>&1; then
         local mp3="$out_base.mp3"
@@ -41,7 +41,7 @@ tts_synthesize() {
       local -a args=()
       [[ -n "$voice" ]] && args+=(-v "$voice")
       [[ -n "$rate"  ]] && args+=(-s "$rate")
-      espeak-ng "${args[@]}" -w "$out" -- "$text" 2>>"$LOG_DIR/tts.err" || return 1
+      espeak-ng ${args[@]+"${args[@]}"} -w "$out" -- "$text" 2>>"$LOG_DIR/tts.err" || return 1
       echo "$out"; return 0
       ;;
     piper)

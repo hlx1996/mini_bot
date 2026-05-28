@@ -51,27 +51,29 @@ lark_reply_card() {
 lark_reply_media() {
   local message_id="$1" file="$2"
   local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
-  local upload_resp image_key data
+  # lark-cli +messages-reply accepts only cwd-relative paths (rejects absolute
+  # and ..), so cd to the file's dir and pass basename.
+  local dir base; dir=$(dirname "$file"); base=$(basename "$file")
+  local flag
   case "$file" in
-    *.jpg|*.jpeg|*.png|*.gif|*.bmp|*.webp)
-      upload_resp=$(lark-cli api POST /open-apis/im/v1/images \
-        --form "image_type=message" --form "image=@$file" \
-        --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
-      image_key=$(jq -r '.data.image_key // empty' <<<"$upload_resp")
-      [[ -z "$image_key" ]] && return 1
-      data=$(jq -nc --arg k "$image_key" '{msg_type:"image", content:({image_key:$k}|tojson)}')
-      ;;
-    *)
-      upload_resp=$(lark-cli api POST /open-apis/im/v1/files \
-        --form "file_type=stream" --form "file_name=$(basename "$file")" \
-        --form "file=@$file" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
-      local file_key; file_key=$(jq -r '.data.file_key // empty' <<<"$upload_resp")
-      [[ -z "$file_key" ]] && return 1
-      data=$(jq -nc --arg k "$file_key" '{msg_type:"file", content:({file_key:$k}|tojson)}')
-      ;;
+    *.jpg|*.jpeg|*.png|*.gif|*.bmp|*.webp)             flag="--image" ;;
+    *.aiff|*.aif|*.wav|*.mp3|*.m4a|*.opus)             flag="--audio" ;;
+    *.mp4|*.mov|*.mkv|*.webm)                          flag="--file" ;;
+    *)                                                  flag="--file" ;;
   esac
-  lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
-    --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err" >/dev/null
+  # Audio: Lark voice msg requires opus. Convert if not already.
+  local sendpath="$base"
+  if [[ "$flag" == "--audio" && "$file" != *.opus ]]; then
+    if command -v ffmpeg >/dev/null 2>&1; then
+      local opus="${file%.*}.opus"
+      ffmpeg -y -i "$file" -c:a libopus -b:a 32k -ar 16000 -ac 1 "$opus" \
+        >/dev/null 2>>"$LOG_DIR/reply.err" \
+        && { dir=$(dirname "$opus"); sendpath=$(basename "$opus"); }
+    fi
+  fi
+  ( cd "$dir" && lark-cli im +messages-reply --as "$as" \
+      --message-id "$message_id" "$flag" "$sendpath" \
+      >/dev/null 2>>"$LOG_DIR/reply.err" )
 }
 
 ###############################################################################
