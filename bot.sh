@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh bridge.sh plugins.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -462,10 +462,38 @@ list_souls() {
 # ---------- memory ----------
 
 memory_path() { printf '%s/%s.txt' "$MEM_DIR" "$1"; }
+memory_path_global() { printf '%s/_global.txt' "$MEM_DIR"; }
 
 memory_show() { local f; f=$(memory_path "$1"); local c; c=$(enc_read "$f"); [[ -n "$c" ]] && printf '%s' "$c" || printf '(本会话暂无记忆)'; }
 memory_add()  { local f; f=$(memory_path "$1"); enc_append "$f" "$2"; }
 memory_clear(){ enc_remove "$(memory_path "$1")"; }
+
+memory_show_global() { local f; f=$(memory_path_global); local c; c=$(enc_read "$f"); [[ -n "$c" ]] && printf '%s' "$c" || printf '(全局记忆暂为空)'; }
+memory_add_global()  { local f; f=$(memory_path_global); enc_append "$f" "$2"; }
+memory_clear_global(){ enc_remove "$(memory_path_global)"; }
+
+# Show last N lines from chat + global combined. N defaults to 10.
+memory_recent() {
+  local key="$1" n="${2:-10}"
+  local lines=""
+  local cf; cf=$(memory_path "$key")
+  local gf; gf=$(memory_path_global)
+  local c=""; c=$(enc_read "$cf"); [[ -n "$c" ]] && lines+="$c"$'\n'
+  local g=""; g=$(enc_read "$gf"); [[ -n "$g" ]] && lines+="[GLOBAL] $(printf '%s' "$g" | sed 's/^/[GLOBAL] /')"$'\n'
+  printf '%s' "$lines" | awk 'NF' | tail -n "$n"
+}
+
+# Grep chat + global memory for keyword. Echoes matching lines with prefix.
+memory_search() {
+  local key="$1" kw="$2"
+  [[ -z "$kw" ]] && return 1
+  local cf; cf=$(memory_path "$key")
+  local gf; gf=$(memory_path_global)
+  local out=""
+  local c; c=$(enc_read "$cf"); [[ -n "$c" ]] && out+=$(printf '%s' "$c" | grep -F -i -- "$kw" 2>/dev/null || true)$'\n'
+  local g; g=$(enc_read "$gf"); [[ -n "$g" ]] && out+=$(printf '%s' "$g" | grep -F -i -- "$kw" 2>/dev/null | sed 's/^/[GLOBAL] /' || true)$'\n'
+  printf '%s' "$out" | awk 'NF'
+}
 
 # ---------- skills ----------
 
@@ -625,16 +653,31 @@ WELCOME_MSG_DEFAULT='👋 你好，我是 mini_bot（qoder lite 驱动）。
 #
 # Layered: soul + memory + (lang hint if any) + tool list note
 build_system_prompt() {
-  local key="$1" soul mem lang_hint extras
-  soul=$(soul_text "$(current_soul_for_key "$key")")
+  local key="$1" soul mem gmem extras
+  # Skill auto-route override takes precedence over stuck soul (this turn only).
+  if [[ -n "${G_SKILL_OVERRIDE:-}" ]]; then
+    local _f
+    if _f=$(_skill_path "$G_SKILL_OVERRIDE"); then
+      soul=$(_skill_body "$_f")
+    else
+      soul=$(soul_text "$(current_soul_for_key "$key")")
+    fi
+  else
+    soul=$(soul_text "$(current_soul_for_key "$key")")
+  fi
   mem=$(memory_show "$key")
   [[ "$mem" == "(本会话暂无记忆)" ]] && mem=""
+  gmem=$(memory_show_global)
+  [[ "$gmem" == "(全局记忆暂为空)" ]] && gmem=""
   extras=""
   if [[ -f "$MCP_CONFIG" ]]; then
     extras+=$'\n\n[Available MCP tool servers from mcp.json]:\n'
     extras+=$(list_mcp_servers)
   fi
   printf '%s' "$soul"
+  if [[ -n "$gmem" ]]; then
+    printf '\n\n[Global long-term memory — applies to every chat]:\n%s' "$gmem"
+  fi
   if [[ -n "$mem" ]]; then
     printf '\n\n[Long-term memory for this chat — treat as ground truth]:\n%s' "$mem"
   fi
@@ -2020,20 +2063,61 @@ handle_memory() {
   [[ "$rest" != "$sub" ]] && args="${rest#* }"
   case "$sub" in
     ""|show)
-      reply_text "$to" "🧠 长期记忆：
-$(memory_show "$key")"
+      local chat_mem; chat_mem=$(memory_show "$key")
+      local glob_mem; glob_mem=$(memory_show_global)
+      reply_text "$to" "🧠 长期记忆（本会话）：
+$chat_mem
+
+🌐 全局记忆：
+$glob_mem"
       ;;
     add)
-      [[ -z "$args" ]] && { reply_text "$to" "用法：/memory add <文本>"; return; }
-      memory_add "$key" "$args"
-      reply_text "$to" "✅ 已记下：$args"
+      # /memory add [-g] <文本>   -g 写全局
+      local scope="chat" body="$args"
+      if [[ "$args" == "-g "* ]]; then scope="global"; body="${args#-g }"; fi
+      if [[ "$args" == "global "* ]]; then scope="global"; body="${args#global }"; fi
+      [[ -z "$body" ]] && { reply_text "$to" "用法：/memory add [-g] <文本>   (-g 写全局)"; return; }
+      if [[ "$scope" == "global" ]]; then
+        memory_add_global "" "$body"; reply_text "$to" "✅ 已写入全局记忆：$body"
+      else
+        memory_add "$key" "$body";    reply_text "$to" "✅ 已写入本会话记忆：$body"
+      fi
+      ;;
+    recent)
+      local n="${args:-10}"
+      [[ "$n" =~ ^[0-9]+$ ]] || n=10
+      local out; out=$(memory_recent "$key" "$n")
+      [[ -z "$out" ]] && out="(暂无)"
+      reply_text "$to" "🧠 最近 $n 条记忆：
+$out"
+      ;;
+    search|find|grep)
+      [[ -z "$args" ]] && { reply_text "$to" "用法：/memory search <关键词>"; return; }
+      local out; out=$(memory_search "$key" "$args")
+      [[ -z "$out" ]] && out="(没匹配上「$args」)"
+      reply_text "$to" "🔎 命中：
+$out"
       ;;
     clear)
-      memory_clear "$key"
-      reply_text "$to" "🧹 长期记忆已清空。"
+      # /memory clear [-g|all]
+      if [[ "$args" == "-g" || "$args" == "global" ]]; then
+        memory_clear_global; reply_text "$to" "🧹 已清空全局记忆。"
+      elif [[ "$args" == "all" ]]; then
+        memory_clear "$key"; memory_clear_global
+        reply_text "$to" "🧹 已清空本会话+全局记忆。"
+      else
+        memory_clear "$key"; reply_text "$to" "🧹 本会话记忆已清空。"
+      fi
       ;;
     *)
-      reply_text "$to" "未知子命令：${sub}。用法：/memory [show|add <text>|clear]"
+      reply_text "$to" "未知子命令：${sub}
+用法：
+  /memory                       看本会话 + 全局记忆
+  /memory add <文本>             记到本会话
+  /memory add -g <文本>          记到全局（所有会话可见）
+  /memory recent [N]            最近 N 条（默认 10）
+  /memory search <关键词>        关键词检索
+  /memory clear [-g|all]        清本会话 / 全局 / 全部"
       ;;
   esac
 }
@@ -2080,6 +2164,61 @@ $body"
       set_soul_for_key "$key" "default"
       reset_session "$key"
       reply_text "$to" "✅ 已退出当前技能/人格，回到 default soul（已重置对话）。"
+      ;;
+    reload|refresh)
+      local n; n=$(list_skills | wc -l | tr -d ' ')
+      reply_text "$to" "✅ Skills 实时加载，无需 reload。当前 $n 个技能可用。
+（直接编辑 $SKILLS_DIR/*.md 或 *.txt，下一条消息立刻生效）"
+      ;;
+    route|routes)
+      # /skill route                          列出
+      # /skill route add <regex> <skill> [global]
+      # /skill route rm <序号>
+      # /skill route clear [global|all]
+      local sub2="${args%% *}" rest2=""
+      [[ "$args" != "$sub2" ]] && rest2="${args#* }"
+      case "$sub2" in
+        ""|list|ls)
+          reply_text "$to" "🎯 Skill 路由规则：
+$(skill_routes_list "$key")
+
+用法：
+  /skill route add <正则> <skill> [global]   命中正则时本轮换 skill body
+  /skill route rm <序号>
+  /skill route clear [global|all]"
+          ;;
+        add)
+          # rest2 = "<regex> <skill> [global]"
+          local rx="${rest2%% *}" tail="${rest2#* }"
+          local sk="${tail%% *}" scope="${tail#* }"
+          [[ "$tail" == "$sk" ]] && scope=""
+          [[ -z "$rx" || -z "$sk" || "$rest2" == "$rx" ]] && {
+            reply_text "$to" "用法：/skill route add <regex> <skill> [global]"; return; }
+          if ! _skill_path "$sk" >/dev/null; then
+            reply_text "$to" "未找到 skill：$sk（/skill list 查看）"; return
+          fi
+          local sc="chat"; [[ "$scope" == "global" ]] && sc="global"
+          skill_routes_add "$key" "$rx" "$sk" "$sc"
+          reply_text "$to" "✅ 已加 $sc 路由：/$rx/ → $sk"
+          ;;
+        rm|del|remove)
+          [[ "$rest2" =~ ^[0-9]+$ ]] || { reply_text "$to" "用法：/skill route rm <序号>"; return; }
+          if skill_routes_rm "$key" "$rest2"; then
+            reply_text "$to" "✅ 已删除规则 #$rest2"
+          else
+            reply_text "$to" "❌ 序号不存在"
+          fi
+          ;;
+        clear)
+          local sc="chat"
+          [[ "$rest2" == "global" ]] && sc="global"
+          [[ "$rest2" == "all" ]] && sc="all"
+          skill_routes_clear "$key" "$sc"
+          reply_text "$to" "🧹 已清空 ($sc) 路由"
+          ;;
+        *)
+          reply_text "$to" "未知子命令：/skill route $sub2" ;;
+      esac
       ;;
     *)
       # /skill <name> [args…]
@@ -2164,7 +2303,51 @@ $(list_mcp_servers)
         reply_text "$to" "(没有 ${MCP_CONFIG}；发 /mcp 看模板)"
       fi
       ;;
-    *) reply_text "$to" "用法：/mcp [list|reload]" ;;
+    test|ping)
+      local name; name="${rest#* }"; [[ "$name" == "$rest" ]] && name=""
+      [[ -z "$name" ]] && { reply_text "$to" "用法：/mcp test <server-name>"; return; }
+      [[ -f "$MCP_CONFIG" ]] || { reply_text "$to" "没有 $MCP_CONFIG"; return; }
+      local cmd; cmd=$(jq -r --arg n "$name" '.mcpServers[$n].command // empty' "$MCP_CONFIG" 2>/dev/null)
+      [[ -z "$cmd" ]] && { reply_text "$to" "找不到 server：$name"; return; }
+      local args_json; args_json=$(jq -r --arg n "$name" '.mcpServers[$n].args // [] | @json' "$MCP_CONFIG")
+      # Build args array from JSON
+      local -a args=()
+      while IFS= read -r a; do args+=("$a"); done < <(echo "$args_json" | jq -r '.[]')
+      reply_text "$to" "🔌 测试启动 MCP 服务器 $name …
+  command: $cmd ${args[*]:-}
+（等待 5 秒检查存活）"
+      local tmp_err; tmp_err=$(mktemp)
+      # Many MCP servers exit immediately on EOF from stdin. Keep stdin alive
+      # for the test window via a coproc sleep so we measure real startup.
+      ( sleep 7 ) | "$cmd" "${args[@]}" >/dev/null 2>"$tmp_err" &
+      local mcp_pid=$!
+      sleep 5
+      local err_tail; err_tail=$(tail -c 500 "$tmp_err" 2>/dev/null)
+      local alive=0
+      kill -0 "$mcp_pid" 2>/dev/null && alive=1
+      # Heuristic: any "running"/"ready"/"started"/"listening" line on stderr
+      # within the window means the server bootstrapped successfully.
+      local ok_marker=0
+      if echo "$err_tail" | grep -Eiq 'running|started|ready|listening|stdio'; then
+        ok_marker=1
+      fi
+      kill "$mcp_pid" 2>/dev/null
+      wait "$mcp_pid" 2>/dev/null || true
+      local result
+      if (( alive == 1 )); then
+        result="✅ $name 启动成功（PID 在 5s 内仍存活）。qoder 可正常调用。
+stderr: ${err_tail:-(无)}"
+      elif (( ok_marker == 1 )); then
+        result="✅ $name 启动成功（输出了启动标志后退出 — 通常是 stdio 服务器在主程序未驱动时的正常行为）。
+stderr: ${err_tail}"
+      else
+        result="❌ $name 启动失败 / 立即退出，且无启动标志。stderr 摘要：
+${err_tail:-(无输出)}"
+      fi
+      rm -f "$tmp_err"
+      reply_text "$to" "$result"
+      ;;
+    *) reply_text "$to" "用法：/mcp [list|reload|test <name>]" ;;
   esac
 }
 
@@ -2695,6 +2878,19 @@ handle_event() {
     if _routed=$(route_for_text "$key" "$G_TEXT") && [[ -n "$_routed" && "$_routed" != "$model" ]]; then
       log "ROUTE key=$key '${G_TEXT:0:40}' $model -> $_routed"
       model="$_routed"
+    fi
+  fi
+
+  # Trigger-keyword skill routing: regex match → temporarily swap system prompt
+  # to the matched skill's body for THIS turn only (does not stick the soul).
+  # Per-chat rules first, then global. See /skill route, lib/skill_router.sh.
+  G_SKILL_OVERRIDE=""
+  if [[ -n "$G_TEXT" ]] && [[ "$G_TEXT" != /* ]] \
+     && command -v skill_route_for_text >/dev/null 2>&1; then
+    local _sk
+    if _sk=$(skill_route_for_text "$key" "$G_TEXT") && [[ -n "$_sk" ]]; then
+      log "SKILL-ROUTE key=$key '${G_TEXT:0:40}' -> $_sk"
+      G_SKILL_OVERRIDE="$_sk"
     fi
   fi
 

@@ -203,6 +203,44 @@ mini_bot 同时支持 **两种 skill 文件格式**：
 /soul 数字刘雨尘               # 等同 /skill 数字刘雨尘（souls/skills 互通）
 ```
 
+### Skills 自动选择（按关键词路由）
+
+类似 `/route` 按关键词换模型，`/skill route` 按关键词把这一轮的 system prompt **换成某个 skill 的正文**（不污染 stuck soul）：
+
+```text
+/skill route add Robotaxi|路网|自动驾驶 数字刘雨尘
+/skill route add (天气|weather) weather global
+/skill route                              # 列出
+/skill route rm 1
+/skill route clear [global|all]
+```
+
+每条消息匹配本会话路由 → 全局路由，**首条命中**的 regex 决定本轮 skill。
+只影响当前回复；要长期固定身份用 `/skill <name>`（stick）或 `/soul <name>`。
+
+### Memory — 全局记忆 / 最近 / 检索
+
+```text
+/memory                       看本会话 + 全局
+/memory add 我喜欢喝拿铁       记到本会话
+/memory add -g 我用 macOS      记到全局（所有会话可见）
+/memory recent 20             最近 20 条（本会话+全局合并）
+/memory search 拿铁           关键词检索
+/memory clear [-g|all]        清本会话 / 全局 / 全部
+```
+
+全局记忆自动注入 **每个会话的 system prompt**，适合放偏好（"我喜欢简洁回复"）、环境（"我在 macOS"）这类跨群跨人的事实。
+
+### MCP — 测试 / 模板
+
+```text
+/mcp                       # 没配置时给完整最小模板（filesystem + fetch）
+/mcp test filesystem       # 实际 spawn，5s 内活着 / 出 "running" 标志算 ok
+/mcp reload                # jq 校验 mcp.json 合法性
+```
+
+带 5 个常用服务器的示例：`examples/mcp.json`。
+
 ### 自定义插件（plugins/*.sh）
 
 任何放进 `plugins/` 的 `.sh` 文件，bot 启动时会自动 source。在文件里调一次

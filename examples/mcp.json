@@ -1,0 +1,35 @@
+{
+  "_comment": "mini_bot MCP servers. Copy to state/mcp.json (or run /mcp to see template). qoder auto-loads via --mcp-config.",
+
+  "mcpServers": {
+    "filesystem": {
+      "_comment": "Read/write files under a single root dir. npx pulls @modelcontextprotocol/server-filesystem on first run.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/Users/xpeng"]
+    },
+
+    "fetch": {
+      "_comment": "Fetch URLs and return clean markdown. Needs `uv` (https://docs.astral.sh/uv).",
+      "command": "uvx",
+      "args": ["mcp-server-fetch"]
+    },
+
+    "git": {
+      "_comment": "Read git repo state (log, diff, blame).",
+      "command": "uvx",
+      "args": ["mcp-server-git", "--repository", "/Users/xpeng/Projects/mini_bot"]
+    },
+
+    "sqlite": {
+      "_comment": "Query a local SQLite DB.",
+      "command": "uvx",
+      "args": ["mcp-server-sqlite", "--db-path", "/Users/xpeng/notes.db"]
+    },
+
+    "memory": {
+      "_comment": "Persistent key-value memory across sessions.",
+      "command": "npx",
+      "args": ["-y", "@modelcontextprotocol/server-memory"]
+    }
+  }
+}
