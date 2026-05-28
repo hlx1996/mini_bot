@@ -937,110 +937,164 @@ handle_command() {
 
     /help|/帮助)
       if [[ "$(lang_get "$key")" == "en" ]]; then
-        reply_text "$to" "📖 mini_bot — commands
+        reply_text "$to" "📖 mini_bot — commands (grouped by function)
 
-— session —    /reset  /model [name]  /cancel  /status  /lang [en|zh]
-— soul —       /soul [list|<name>|show|save <name>=<text>]
-— memory —     /memory [add <text>|clear]
-— skills —     /skill list | /skill <name> [args…] | /skill show <name>
-— mcp —        /mcp [reload]
-— web —        /search <q>   /news <q>
-— image —      /image [n=N] [style=…] <prompt>
-— tts —        /tts on|off|engine|voice [name|-]|rate [n|-]
-— hooks —      /hooks
-— quota —      /quota [show|set <n>|reset]
-— groups —     /whitelist [list|add|rm <id>]  (admin)
-— admin —      /admin [list|add|rm <user>]    /say <user> <text>
-— cron —       /cron [list|rm <id>|addto <key> <expr> <prompt>|nl <text>]
-— v4 —         /cwd <abs-path> | /cwd clear
-— v5 —         /agent <soul> <task>
-                /team [show|set <r1> <r2>…|run <task>|clear]
-                /automem on|off
-— v6 —         /backup [create|list|restore <file>]   (admin)
-                /card <title>|<content>                (lark only)
-— v7 —         /usage [day|week|all]
-                /lang [en|zh]
-— misc —       /whoami  /export  /stats  /help"
+— Session —
+  /reset                       clear chat memory
+  /model [<name>]              show / switch model (default ${BOT_MODEL_DEFAULT})
+  /cancel                      abort current request
+  /status                      bot status
+  /lang [en|zh]                switch /help language
+
+— Persona (Soul) —
+  /soul [list|<name>|show|save <n>=<text>]
+
+— Memory —
+  /memory [add <text>|clear]   long-term notes (survives /reset)
+  /automem on|off              auto-extract facts each turn
+
+— Skills —
+  /skill list | <n> [args]|show <n>
+
+— Sub-Agents & Teams —
+  /agent <soul> <task>         one-shot side agent
+  /team [show|set <r1> <r2>…|run <task>|clear]
+
+— MCP —
+  /mcp [reload]
+
+— Scheduled tasks —
+  /cron [list|rm <id>|add \"<expr>\" <prompt>|addto <key> <expr> <prompt>|nl <text>]
+
+— Web / search —
+  /search <q>                  web search + qoder synthesis
+  /news <q>                    raw search hits
+
+— Multimodal generation —
+  /image [n=N] [style=…] <prompt>
+  /tts on|off|engine|voice [name|-]|rate [n|-]
+
+— Knowledge (RAG) —
+  /rag list|on|off|add <name> <text>|rm <name>
+
+— Smart routing —
+  /auto on|off                 natural-language → command
+
+— Local project —
+  /cwd <abs-path> | /cwd clear
+
+— Lark only —
+  /card <title>|<content>      rich-text card reply
+
+— Hooks / quotas / governance —
+  /hooks
+  /quota [show|set <n>|reset]
+  /mute | /unmute              silence this chat
+  /whitelist [list|add|rm <id>] (admin)
+  /admin [list|add|rm <user>]   (admin)
+  /say <user> <text>           (admin)
+
+— Backup —
+  /backup [create|list|restore <file>]  (admin)
+
+— Stats & export —
+  /usage [day|week|all]
+  /stats
+  /export [n]
+  /whoami
+  /account [list|add|rm]       multi-WeChat account mgmt
+
+Send any text / image / voice / video / file directly — multi-turn context is remembered."
         return 0
       fi
-      reply_text "$to" "📖 wxbot 命令一览
+      reply_text "$to" "📖 mini_bot 命令一览（按功能分组）
 
 — 会话 —
-  /reset                  清空 qoder 会话（多轮记忆）
-  /model [<name>]         查看 / 切换模型（默认 ${BOT_MODEL_DEFAULT}）
-  /cancel                 中止当前正在处理的请求
-  /status                 bot 状态
+  /reset                       清空 qoder 会话记忆
+  /model [<name>]              查看 / 切换模型（默认 ${BOT_MODEL_DEFAULT}）
+  /cancel                      中止当前正在处理的请求
+  /status                      bot 状态
+  /lang [en|zh]                切换 /help 语言
 
 — 灵魂 / 人格 —
-  /soul                   显示当前 soul
-  /soul list              列出全部 soul
-  /soul <name>            切换 soul（如 default / cat / pro / coder）
-  /soul show [name]       查看 soul 内容
-  /soul save <name>=<文本> 自定义 soul（持久化）
+  /soul                        显示当前 soul
+  /soul list                   列出全部 soul
+  /soul <name>                 切换 soul（如 default / cat / pro / coder）
+  /soul show [name]            查看 soul 内容
+  /soul save <name>=<文本>     自定义 soul（持久化）
 
 — 长期记忆 —
-  /memory                 查看本会话记忆
-  /memory add <文本>      追加一条记忆（永久，跨 /reset）
-  /memory clear           清空本会话记忆
+  /memory                      查看本会话记忆
+  /memory add <文本>           追加一条记忆（跨 /reset 保留）
+  /memory clear                清空本会话记忆
+  /automem on|off              每轮自动抽取事实存入 /memory
 
-— 技能 —
-  /skill list             列出全部技能模板
-  /skill <name> [args…]   执行一个技能（如 /skill translate en hello）
-  /skill show <name>      查看技能模板内容
+— 技能模板 —
+  /skill list                  列出全部技能
+  /skill <name> [args…]        执行技能（如 /skill translate en hello）
+  /skill show <name>           查看技能模板
+
+— Sub-Agent / 团队 —
+  /agent <soul> <task>         一次性临时角色（不污染主会话）
+  /team show                   查看本会话团队管线
+  /team set <r1> <r2> …        定义角色管线（如 researcher critic editor）
+  /team run <task>             依次跑完整个 team
+  /team clear                  清除管线
+
+— MCP —
+  /mcp                         列出已配置的 MCP 服务器
+  /mcp reload                  重新加载 mcp.json
 
 — 定时任务 —
   /cron list
   /cron add \"<cron-expr>\" <prompt>
-  /cron addto <platform>:<account>:<chat_id> \"<expr>\" <prompt>   🆕 跨会话推送
-  /cron nl <自然语言>      例：/cron nl 每天早八点提醒喝水
+  /cron addto <platform>:<account>:<chat_id> \"<expr>\" <prompt>   跨会话推送
+  /cron nl <自然语言>          例：/cron nl 每天早八点提醒喝水
   /cron rm <id>
 
-— Sub-Agent / 团队 / 自动记忆 —          🆕 v5
-  /agent <soul> <task>     一次性临时角色（不污染主会话）
-  /team show               查看本会话团队角色管线
-  /team set <r1> <r2> …    定义角色管线（如 researcher critic editor）
-  /team run <task>          依次跑完整个 team
-  /automem on|off          每轮自动抽取事实存入 /memory
-  /backup [list|create|restore <file>]  💾 备份/恢复（admin）
-  /card <title>|<content>  🆕 Lark 富文本卡片回复
-  /usage [day|week|all]    📊 用量统计（按账号/用户）
-  /lang [en|zh]            🌐 切换 /help 语言
+— 联网搜索 —
+  /search <关键词>             联网搜索 + qoder 综合回答
+  /news <关键词>               直接返回搜索摘要列表
 
-— 本地项目 —                              🆕 v4
-  /cwd <绝对路径>          把 qoder 工作目录锁到该项目
-  /cwd | /cwd clear        查看 / 恢复默认沙盒
+— 多模态生成 —
+  /image [n=N] [style=…] <提示词>  AI 生成图片（多张/风格）
+  /tts on|off|engine|voice [name|-]|rate [n|-]    语音回复（音色/语速）
 
-— MCP —
-  /mcp                    列出已配置的 MCP 服务器
-  /mcp reload             重新加载 mcp.json
+— 知识库 (RAG) —
+  /rag list|on|off
+  /rag add <名字> <内容>       把一段文本喂给本会话 RAG
+  /rag rm <名字>               删除一条
 
-— 联网 / 多模态 —
-  /search <关键词>        🆕 联网搜索 + qoder 综合回答
-  /news <关键词>          🆕 直接返回搜索摘要列表
-  /image [n=2] [style=…] <提示词>  🆕 AI 生成图片（多张/风格）
-  /tts on|off|engine|voice [name|-]|rate [n|-]    🆕 语音回复（音色/语速）
-  /hooks                  🆕 查看 hooks 安装情况
+— 自然语言路由 —
+  /auto on|off                 自然语言自动调用以上命令（默认 on）
 
-— 智能 / 知识 —
-  /auto on|off            🆕 自然语言自动调用以上命令（默认 on）
-  /rag list|on|off        🆕 RAG 知识库开关 / 列表
-  /rag add <名字> <内容>  把一段文本喂给本会话 RAG
-  /rag rm <名字>          删除一条
+— 本地项目 —
+  /cwd <绝对路径>              把 qoder 工作目录锁到该项目
+  /cwd | /cwd clear            查看 / 恢复默认沙盒
 
-— 治理 / 配额 / 导出 —
-  /mute       /unmute     静音本会话（不再自动回复，可被 admin 解除）
-  /quota                  查看今日配额（默认 ${QUOTA_DEFAULT}/天）
-  /quota set <n>          设置本会话每日配额（0=不限）  *admin*
-  /export [n]             导出本会话最近 n 条消息（默认 20）
-  /stats                  全局统计
-  /whitelist add <user>   仅允许列表中的用户  *admin*
-  /whitelist rm <user>    *admin*
-  /admin add <user>       提升管理员  *admin*
-  /say <user> <text>      代发一条消息  *admin*
-  /whoami                 显示你的 user-id / chat-key
-  /account [list|add|rm]  🆕 微信账号管理（多账号模式）
+— Lark 专属 —
+  /card <title>|<content>      飞书富文本卡片回复
 
-直接发文字 / 图片 / 语音 / 视频 / 文件即可。"
+— Hooks / 配额 / 治理 —
+  /hooks                       查看 hooks 安装情况
+  /quota                       查看今日配额（默认 ${QUOTA_DEFAULT}/天）
+  /quota set <n>               设置每日配额（0=不限）  *admin*
+  /mute / /unmute              静音本会话（不再自动回复）
+  /whitelist add|rm <user>     白名单（仅允许列表内）   *admin*
+  /admin add|rm <user>         管理员管理               *admin*
+  /say <user> <text>           代发一条消息             *admin*
+
+— 备份 / 恢复 —
+  /backup [list|create|restore <file>]                 *admin*
+
+— 统计 / 导出 —
+  /usage [day|week|all]        用量统计
+  /stats                       全局统计
+  /export [n]                  导出本会话最近 n 条
+  /whoami                      显示你的 user-id / chat-key
+  /account [list|add|rm]       微信账号管理（多账号模式）
+
+直接发文字 / 图片 / 语音 / 视频 / 文件即可，多轮上下文我会记住。"
       return 0 ;;
 
     /model)
