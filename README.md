@@ -273,6 +273,25 @@ register_command "/hello" plugin_hello "示例插件"
 - `/agent route add <regex> agent:<soul>|team [global]`：和 `/skill route` 一样
   的关键词→agent 自动触发，命中后会把消息重写成 `/agent <soul> <text>` 或
   `/team run <text>` 再分发。
+- `/web <url> [问题]`：抓网页 → 提取正文（python `html.parser` 剥标签）→ 让
+  qoder 总结要点。可选 `[问题]` 让总结围绕该问题展开。
+- `/translate-doc <url|text> [target=zh|en|...]`（别名 `/翻译`）：复用 `/web`
+  的剥离逻辑，整篇翻译为目标语言。默认 `target=zh`。
+- `/calc <expr>`：纯 python AST 沙箱表达式计算。支持 `sqrt log sin pi e` 等
+  `math` 函数；遇到 `__import__` / 函数调用未在白名单内一律拒绝。
+- `/image [n=N] [style=…] <提示词>`（别名 `/img` `/画`）：默认走 pollinations
+  + `model=flux`（免 key），可切换 `IMAGE_ENGINE=hf` 走 HuggingFace Inference
+  API（需 `HF_TOKEN`，模型 `HF_IMAGE_MODEL`，默认
+  `black-forest-labs/FLUX.1-schnell`）。
+- `/browse <url>`：playwright 后台无头浏览，截图 + 提取正文 + qoder 总结。
+  默认每次起一个干净 chromium；设 `USE_LOCAL_CHROME=1` 时改为通过 CDP 接到
+  `http://localhost:9222`（先 `chrome --remote-debugging-port=9222
+  --user-data-dir=~/.chrome-debug`），可复用已登录态。
+- `/video <提示词>`：通过 playwright + CDP 自动操作 Hailuo (海螺) 网页生成
+  视频（纯免费、需先在本地 Chrome 里登录好）。需要打开 9222 调试端口的
+  Chrome；命令本身不弹窗，全程后台。
+  > 安装 playwright：`cd ~/Projects/mini_bot && npm install playwright && \
+  >   npx playwright install chromium`
 
 ### 智能记忆检索（BM25 + 字符二元）
 
