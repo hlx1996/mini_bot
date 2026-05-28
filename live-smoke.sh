@@ -229,6 +229,77 @@ kill $WPID2 2>/dev/null || true
 if [[ "$c1" == "302" ]]; then echo "  ✅ unauth redirected (302)"; PASS=$((PASS+1)); else echo "  ❌ expected 302, got $c1"; FAIL=$((FAIL+1)); fi
 if [[ -n "$cookie" && "$c2" == "200" ]]; then echo "  ✅ mock-OAuth cookie grants access (200)"; PASS=$((PASS+1)); else echo "  ❌ oauth-cookie failed: cookie='$cookie' code=$c2"; FAIL=$((FAIL+1)); fi
 
+# ---------------------------------------------------------------------------
+# Test 17: Telegram transport (curl stub captures sendMessage)
+# ---------------------------------------------------------------------------
+echo "== Test 17: Telegram tg_reply_text via stubbed curl =="
+TG_STUB_DIR="$TMP/tgbin"
+mkdir -p "$TG_STUB_DIR"
+TG_LOG="$TMP/tg-calls.log"
+cat > "$TG_STUB_DIR/curl" <<EOSTUB
+#!/usr/bin/env bash
+echo "CURL ARGS: \$*" >>"$TG_LOG"
+for a in "\$@"; do echo "ARG: \$a" >>"$TG_LOG"; done
+echo '{"ok":true,"result":{"message_id":1}}'
+EOSTUB
+chmod +x "$TG_STUB_DIR/curl"
+(
+  export PATH="$TG_STUB_DIR:$PATH"
+  export TELEGRAM_BOT_TOKEN="FAKE123"
+  export LOG_DIR="$TMP/tg-logs"; mkdir -p "$LOG_DIR"
+  source "$SCRIPT_DIR/lib/telegram.sh"
+  tg_reply_text 1234 "hello tg" >/dev/null || true
+)
+if grep -q 'sendMessage' "$TG_LOG" && grep -q 'hello tg' "$TG_LOG"; then
+  echo "  ✅ telegram sendMessage invoked with text"; PASS=$((PASS+1))
+else
+  echo "  ❌ telegram stub log missing sendMessage/text"; cat "$TG_LOG" | head -20; FAIL=$((FAIL+1))
+fi
+
+# ---------------------------------------------------------------------------
+# Test 18: Encryption roundtrip
+# ---------------------------------------------------------------------------
+echo "== Test 18: at-rest encryption roundtrip =="
+(
+  export MINIBOT_ENCRYPT_KEY="smoke-test-key"
+  source "$SCRIPT_DIR/lib/crypt.sh"
+  ENC_TMP="$TMP/enc-test.txt"
+  enc_write "$ENC_TMP" "secret-payload-$$"
+  if [[ -f "$ENC_TMP.enc" && ! -f "$ENC_TMP" ]]; then
+    echo "  ✅ .enc file present, plain file absent"
+  else
+    echo "  ❌ enc_write did not produce .enc file or left plain"; exit 1
+  fi
+  # raw bytes should NOT contain plaintext
+  if grep -q 'secret-payload' "$ENC_TMP.enc" 2>/dev/null; then
+    echo "  ❌ ciphertext contains plaintext leak"; exit 1
+  else
+    echo "  ✅ on-disk content is encrypted"
+  fi
+  out=$(enc_read "$ENC_TMP")
+  if [[ "$out" == "secret-payload-$$" ]]; then
+    echo "  ✅ enc_read returns plaintext"
+  else
+    echo "  ❌ roundtrip mismatch: got '$out'"; exit 1
+  fi
+) && PASS=$((PASS+3)) || FAIL=$((FAIL+1))
+
+# ---------------------------------------------------------------------------
+# Test 19: Prometheus /metrics endpoint
+# ---------------------------------------------------------------------------
+echo "== Test 19: /metrics Prometheus endpoint =="
+WEB_PORT3=$((WEB_PORT + 2))
+BOT_HOME="$BOT_HOME" python3 "$SCRIPT_DIR/web.py" --port "$WEB_PORT3" --host 127.0.0.1 >/dev/null 2>&1 &
+WPID3=$!
+sleep 1
+body=$(curl -s "http://127.0.0.1:$WEB_PORT3/metrics" || true)
+kill $WPID3 2>/dev/null || true
+if grep -q '# HELP minibot_events_total' <<<"$body" && grep -q 'minibot_active_chats' <<<"$body"; then
+  echo "  ✅ /metrics returns Prometheus exposition"; PASS=$((PASS+1))
+else
+  echo "  ❌ /metrics body unexpected"; echo "$body" | head -10; FAIL=$((FAIL+1))
+fi
+
 echo
 echo "============================================"
 echo " PASS: $PASS    FAIL: $FAIL"

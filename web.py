@@ -259,6 +259,57 @@ def list_backups() -> list[dict]:
     return out
 
 
+def metrics_text() -> str:
+    """Prometheus text exposition format. Aggregates from events.jsonl + backups dir."""
+    events_total: dict[tuple, int] = {}   # (platform, kind) -> count
+    replies_total: dict[tuple, int] = {}  # (platform, ok) -> count
+    chars_total = {"in": 0, "out": 0}
+    active_chats: set = set()
+    if EVENT_LOG.exists():
+        with EVENT_LOG.open("r") as f:
+            for ln in f:
+                try: e = json.loads(ln)
+                except Exception: continue
+                plat = e.get("platform") or "wechat"
+                kind = e.get("kind") or "?"
+                if kind == "event":
+                    events_total[(plat, "event")] = events_total.get((plat, "event"), 0) + 1
+                    chars_total["in"] += len(e.get("text") or "")
+                    frm = e.get("from"); 
+                    if frm: active_chats.add(f"{plat}:{frm}")
+                elif kind == "reply":
+                    ok = "true" if e.get("ok", True) else "false"
+                    replies_total[(plat, ok)] = replies_total.get((plat, ok), 0) + 1
+                    chars_total["out"] += len(e.get("text") or "")
+                else:
+                    events_total[(plat, kind)] = events_total.get((plat, kind), 0) + 1
+    backups_count = 0
+    try:
+        backups_count = sum(1 for _ in BACKUP_DIR.glob("*.tgz")) if 'BACKUP_DIR' in globals() else 0
+    except Exception:
+        pass
+    out = []
+    out.append("# HELP minibot_events_total Inbound events processed.")
+    out.append("# TYPE minibot_events_total counter")
+    for (plat, kind), n in sorted(events_total.items()):
+        out.append(f'minibot_events_total{{platform="{plat}",kind="{kind}"}} {n}')
+    out.append("# HELP minibot_replies_total Outbound replies sent.")
+    out.append("# TYPE minibot_replies_total counter")
+    for (plat, ok), n in sorted(replies_total.items()):
+        out.append(f'minibot_replies_total{{platform="{plat}",ok="{ok}"}} {n}')
+    out.append("# HELP minibot_chars_total Cumulative characters by direction.")
+    out.append("# TYPE minibot_chars_total counter")
+    for d, n in chars_total.items():
+        out.append(f'minibot_chars_total{{dir="{d}"}} {n}')
+    out.append("# HELP minibot_active_chats Distinct chats seen.")
+    out.append("# TYPE minibot_active_chats gauge")
+    out.append(f"minibot_active_chats {len(active_chats)}")
+    out.append("# HELP minibot_backups_count Backup archives on disk.")
+    out.append("# TYPE minibot_backups_count gauge")
+    out.append(f"minibot_backups_count {backups_count}")
+    return "\n".join(out) + "\n"
+
+
 def usage_report(scope: str = "day") -> dict:
     now = int(time.time())
     since = {"day": now - 86400, "week": now - 7*86400, "all": 0}.get(scope, now - 86400)
@@ -699,8 +750,15 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
-        if not self._require_auth(): return
         u = urlparse(self.path)
+        if u.path == "/metrics":
+            body = metrics_text().encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "text/plain; version=0.0.4; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body); return
+        if not self._require_auth(): return
         q = parse_qs(u.query)
         try:
             if u.path == "/login":           return self._do_login()

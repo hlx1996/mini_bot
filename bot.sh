@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh; do
+for _mod in lark.sh telegram.sh agents.sh tts.sh crypt.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -115,15 +115,18 @@ set_model_for_key() {
 get_session_uuid() {
   local key="$1"
   local f="$SESS_DIR/$key.uuid"
-  if [[ ! -s "$f" ]]; then
-    uuidgen | tr '[:upper:]' '[:lower:]' >"$f"
+  local v; v=$(enc_read "$f")
+  if [[ -z "$v" ]]; then
+    v=$(uuidgen | tr '[:upper:]' '[:lower:]')
+    enc_write "$f" "$v"
   fi
-  cat "$f"
+  printf '%s' "$v"
 }
 
 reset_session() {
   local key="$1"
-  rm -f "$SESS_DIR/$key.uuid" "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock"
+  enc_remove "$SESS_DIR/$key.uuid"
+  rm -f "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock"
 }
 
 wxlink() {
@@ -143,6 +146,9 @@ reply_text() {
   case "$platform" in
     lark|feishu)
       lark_reply_text "$to" "$text" || ok=false
+      ;;
+    telegram)
+      tg_reply_text "$to" "$text" >/dev/null || ok=false
       ;;
     *)
       local out
@@ -167,6 +173,10 @@ reply_media() {
     lark|feishu)
       lark_reply_media "$to" "$file"
       [[ -n "$caption" ]] && lark_reply_text "$to" "$caption" || true
+      ;;
+    telegram)
+      tg_reply_media "$to" "$file" >/dev/null
+      [[ -n "$caption" ]] && tg_reply_text "$to" "$caption" >/dev/null || true
       ;;
     *)
       wxlink send-media --to "$to" --file "$file" ${caption:+--caption "$caption"} \
@@ -364,10 +374,9 @@ list_souls() {
 
 memory_path() { printf '%s/%s.txt' "$MEM_DIR" "$1"; }
 
-memory_show() { local f; f=$(memory_path "$1"); [[ -s "$f" ]] && cat "$f" || printf '(本会话暂无记忆)'; }
-
-memory_add()  { local f; f=$(memory_path "$1"); printf '%s\n' "$2" >> "$f"; }
-memory_clear(){ rm -f "$(memory_path "$1")"; }
+memory_show() { local f; f=$(memory_path "$1"); local c; c=$(enc_read "$f"); [[ -n "$c" ]] && printf '%s' "$c" || printf '(本会话暂无记忆)'; }
+memory_add()  { local f; f=$(memory_path "$1"); enc_append "$f" "$2"; }
+memory_clear(){ enc_remove "$(memory_path "$1")"; }
 
 # ---------- skills ----------
 
@@ -2414,6 +2423,19 @@ main() {
                 handle_event "$ev" &
               done
             log "lark subscribe[$acct] exited; restarting in 3s..."
+            sleep 3
+          done
+        ) &
+        ;;
+      telegram|tg)
+        (
+          while true; do
+            tg_subscribe_loop "$acct" \
+              2>>"$LOG_DIR/telegram-$acct.err" \
+            | while IFS= read -r ev; do
+                handle_event "$ev" &
+              done
+            log "telegram subscribe[$acct] exited; restarting in 3s..."
             sleep 3
           done
         ) &

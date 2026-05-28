@@ -1,0 +1,42 @@
+{
+  "title": "mini_bot",
+  "schemaVersion": 38,
+  "timezone": "browser",
+  "refresh": "30s",
+  "panels": [
+    {
+      "type": "stat", "title": "Active chats", "id": 1,
+      "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "minibot_active_chats"}]
+    },
+    {
+      "type": "stat", "title": "Backups", "id": 2,
+      "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+      "targets": [{"expr": "minibot_backups_count"}]
+    },
+    {
+      "type": "timeseries", "title": "Events / sec (by platform)", "id": 3,
+      "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "sum by (platform) (rate(minibot_events_total[5m]))",
+        "legendFormat": "{{platform}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "Reply success rate", "id": 4,
+      "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+      "targets": [{
+        "expr": "sum by (ok) (rate(minibot_replies_total[5m]))",
+        "legendFormat": "ok={{ok}}"
+      }]
+    },
+    {
+      "type": "timeseries", "title": "Characters in/out (per min)", "id": 5,
+      "gridPos": {"x": 0, "y": 12, "w": 24, "h": 8},
+      "targets": [{
+        "expr": "sum by (dir) (rate(minibot_chars_total[1m]) * 60)",
+        "legendFormat": "{{dir}}"
+      }]
+    }
+  ]
+}
