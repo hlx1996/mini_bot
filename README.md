@@ -94,7 +94,10 @@ bash bot.sh run
 | `/bg <慢问题>` | 后台思考：立即回 🤔，跑完再把结果推回来；`/bg list`、`/bg cancel <id>` |
 | `/pin add 老板偏好 简洁回复` | 常驻"小抄"：每次回复都拼上（原 `/rag` 已改名 `/pin`） |
 | `/rag add <feishu-doc-url>` | 真 RAG：把 Feishu 文档纳入知识库，提问时按关键词检索；**原文不落地** |
-| `/rag list` / `/rag rm <token>` / `/rag test <q>` | 看 / 删 / 调试检索 |
+| `/rag add-folder <folder-url>` | 递归索引整个文件夹下所有 docx（上限 200） |
+| `/rag add-mine [keyword]` | 索引我拥有的所有 docx（需 `search:docs:read` scope，命令会提示登录） |
+| `/rag refresh` | 重新拉一遍所有已索引文档（捕获最新改动） |
+| `/rag list` / `/rag rm <token>` / `/rag test <q>` / `/rag stats` | 看 / 删 / 调试检索 / 看大小 |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
