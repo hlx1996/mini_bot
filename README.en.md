@@ -184,6 +184,7 @@ lark:lark_main      cat         qoder-cli
 | `MINIBOT_USER` / `MINIBOT_PASS` | Dashboard Basic Auth |
 | `MINIBOT_ENCRYPT_KEY` | Enable at-rest encryption |
 | `LARK_APP_ID` / `LARK_APP_SECRET` | Lark app creds |
+| `LARK_AS` / `LARK_AS_<NAME>` | lark-cli identity name (default `bot`; rarely needed) |
 | `MINIBOT_GH_CLIENT_ID` / `MINIBOT_GH_CLIENT_SECRET` / `MINIBOT_GH_ALLOWED_USERS` | GitHub OAuth for dashboard |
 
 ---

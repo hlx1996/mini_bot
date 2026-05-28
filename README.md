@@ -186,6 +186,7 @@ lark:lark_main      cat         qoder-cli
 | `MINIBOT_USER` / `MINIBOT_PASS` | 面板 Basic Auth |
 | `MINIBOT_ENCRYPT_KEY` | 启用对话/记忆加密 |
 | `LARK_APP_ID` / `LARK_APP_SECRET` | 飞书凭证 |
+| `LARK_AS` / `LARK_AS_<NAME>` | lark-cli 身份名（默认 `bot`，一般无需改） |
 | `MINIBOT_GH_CLIENT_ID` / `MINIBOT_GH_CLIENT_SECRET` / `MINIBOT_GH_ALLOWED_USERS` | 面板用 GitHub OAuth 登录 |
 
 ---

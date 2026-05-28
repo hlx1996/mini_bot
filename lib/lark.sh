@@ -1,11 +1,25 @@
 #!/usr/bin/env bash
 # lib/lark.sh — Lark/Feishu transport: reply (text/card/media) + event subscription
 # Sourced by bot.sh. Depends on globals: LOG_DIR, DL_ROOT, PYTHON_BIN.
+#
+# Note about --as:
+#   lark-cli identifies *its own* auth profile via --as. After `lark-cli auth login`
+#   the bot identity is named `bot` (and `event +subscribe` only accepts `bot`).
+#   This is unrelated to our accounts.list label. Override per-account via
+#   LARK_AS_<NAME> (uppercase) env var if you actually have multiple lark-cli
+#   profiles; otherwise we default to `bot`.
+
+lark_as_for() {
+  local acct="$1"
+  local up; up=$(printf '%s' "$acct" | tr '[:lower:].-' '[:upper:]__')
+  local var="LARK_AS_${up}"
+  printf '%s' "${!var:-${LARK_AS:-bot}}"
+}
 
 lark_reply_text() {
-  local message_id="$1" text="$2" acct="${G_ACCOUNT_NAME:-bot}"
+  local message_id="$1" text="$2"
+  local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
   local data resp
-  # If G_MENTION_USER is set (group @ reply), prepend <at user_id="..."/>
   if [[ -n "${G_MENTION_USER:-}" ]]; then
     local at_tag
     at_tag=$(printf '<at user_id="%s"></at> ' "$G_MENTION_USER")
@@ -13,13 +27,13 @@ lark_reply_text() {
   fi
   data=$(jq -nc --arg t "$text" '{msg_type:"text", content:({text:$t}|tojson)}')
   resp=$(lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
-    --data "$data" --as "$acct" 2>>"$LOG_DIR/reply.err") || return 1
+    --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
   [[ -n "$resp" ]]
 }
 
 lark_reply_card() {
-  # $1 message_id  $2 title  $3 content (markdown supported)
-  local message_id="$1" title="$2" content="$3" acct="${G_ACCOUNT_NAME:-bot}"
+  local message_id="$1" title="$2" content="$3"
+  local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
   local card data
   card=$(jq -nc --arg title "$title" --arg content "$content" '
     {
@@ -31,34 +45,33 @@ lark_reply_card() {
     }')
   data=$(jq -nc --argjson c "$card" '{msg_type:"interactive", content:($c|tojson)}')
   lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
-    --data "$data" --as "$acct" 2>>"$LOG_DIR/reply.err" >/dev/null
+    --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err" >/dev/null
 }
 
 lark_reply_media() {
-  local message_id="$1" file="$2" acct="${G_ACCOUNT_NAME:-bot}"
-  # Upload image first, then reply with image message
+  local message_id="$1" file="$2"
+  local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
   local upload_resp image_key data
   case "$file" in
     *.jpg|*.jpeg|*.png|*.gif|*.bmp|*.webp)
       upload_resp=$(lark-cli api POST /open-apis/im/v1/images \
         --form "image_type=message" --form "image=@$file" \
-        --as "$acct" 2>>"$LOG_DIR/reply.err") || return 1
+        --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
       image_key=$(jq -r '.data.image_key // empty' <<<"$upload_resp")
       [[ -z "$image_key" ]] && return 1
       data=$(jq -nc --arg k "$image_key" '{msg_type:"image", content:({image_key:$k}|tojson)}')
       ;;
     *)
-      # Generic file upload
       upload_resp=$(lark-cli api POST /open-apis/im/v1/files \
         --form "file_type=stream" --form "file_name=$(basename "$file")" \
-        --form "file=@$file" --as "$acct" 2>>"$LOG_DIR/reply.err") || return 1
+        --form "file=@$file" --as "$as" 2>>"$LOG_DIR/reply.err") || return 1
       local file_key; file_key=$(jq -r '.data.file_key // empty' <<<"$upload_resp")
       [[ -z "$file_key" ]] && return 1
       data=$(jq -nc --arg k "$file_key" '{msg_type:"file", content:({file_key:$k}|tojson)}')
       ;;
   esac
   lark-cli api POST "/open-apis/im/v1/messages/$message_id/reply" \
-    --data "$data" --as "$acct" 2>>"$LOG_DIR/reply.err" >/dev/null
+    --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err" >/dev/null
 }
 
 ###############################################################################
@@ -66,6 +79,7 @@ lark_reply_media() {
 ###############################################################################
 lark_subscribe_loop() {
   local acct="$1"
+  local as; as=$(lark_as_for "$acct")
   local lark_dl="$DL_ROOT/lark-$acct"
   mkdir -p "$lark_dl"
   command -v lark-cli >/dev/null 2>&1 || {
@@ -74,13 +88,14 @@ lark_subscribe_loop() {
     return 0
   }
   lark-cli event +subscribe \
-    --as "$acct" \
+    --as "$as" \
     --event-types im.message.receive_v1 \
     --quiet \
   | "$PYTHON_BIN" <(cat <<'PY'
 import sys, json, os, subprocess
 acct = sys.argv[1]
 dl_dir = sys.argv[2]
+as_id  = sys.argv[3]
 for line in sys.stdin:
     line = line.strip()
     if not line: continue
@@ -108,7 +123,7 @@ for line in sys.stdin:
                 subprocess.run(["lark-cli","im","+messages-resources-download",
                     "--message-id", msg.get("message_id",""),
                     "--file-key", ikey, "--type", "image",
-                    "--output", os.path.basename(fpath), "--as", acct],
+                    "--output", os.path.basename(fpath), "--as", as_id],
                     cwd=dl_dir, check=False,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=30)
@@ -131,7 +146,7 @@ for line in sys.stdin:
                 subprocess.run(["lark-cli","im","+messages-resources-download",
                     "--message-id", msg.get("message_id",""),
                     "--file-key", fkey, "--type", "file",
-                    "--output", os.path.basename(fpath), "--as", acct],
+                    "--output", os.path.basename(fpath), "--as", as_id],
                     cwd=dl_dir, check=False,
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
                     timeout=60)
@@ -159,5 +174,5 @@ for line in sys.stdin:
     }
     print(json.dumps(out, ensure_ascii=False), flush=True)
 PY
-) "$acct" "$lark_dl"
+) "$acct" "$lark_dl" "$as"
 }
