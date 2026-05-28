@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -1049,6 +1049,8 @@ handle_command() {
 
 — Smart routing —
   /auto on|off                 natural-language → command
+  /route [list|add <regex> <model> [global]|rm <n>|clear]
+  /cost [day|week|all]         coarse token/$ usage
 
 — Local project —
   /cwd <abs-path> | /cwd clear
@@ -1141,6 +1143,13 @@ Send any text / image / voice / video / file directly — multi-turn context is 
 
 — 自然语言路由 —
   /auto on|off                 自然语言自动调用以上命令（默认 on）
+
+— 关键词模型路由 / 费用 —
+  /route                       查看当前路由规则
+  /route add <regex> <model> [global]    添加（regex 命中文本则换模型）
+  /route rm <序号> [global]    删除
+  /route clear [global]        清空
+  /cost [day|week|all]         查看 token / 估算费用
 
 — 本地项目 —
   /cwd <绝对路径>              把 qoder 工作目录锁到该项目
@@ -1293,6 +1302,52 @@ example：/team set researcher critic editor"
           ;;
         *) reply_text "$to" "未知子命令：$sub_team。用法：/team [show|set <roles>|run <task>|clear]" ;;
       esac
+      return 0 ;;
+
+    /route|/路由)
+      # /route                              list current rules
+      # /route add <pattern> <model> [global]
+      # /route rm <line-num> [global]
+      # /route clear [global]
+      local sub_r="${rest%% *}"
+      local args_r="${rest#"$sub_r"}"; args_r="${args_r# }"
+      case "$sub_r" in
+        ""|list|show)
+          reply_text "$to" "$(route_list "$key")
+
+新增：/route add <regex> <model> [global]
+删除：/route rm <序号> [global]
+清空：/route clear [global]
+（规则匹配 user 文本时把 model 临时替换成指定值；首匹配生效）"
+          ;;
+        add)
+          local pat="${args_r%% *}"
+          local rest_r="${args_r#"$pat"}"; rest_r="${rest_r# }"
+          local mdl="${rest_r%% *}"
+          local scope_r="${rest_r#"$mdl"}"; scope_r="${scope_r# }"
+          [[ -z "$pat" || -z "$mdl" ]] && { reply_text "$to" "用法：/route add <regex> <model> [global]"; return 0; }
+          route_add "$key" "$pat" "$mdl" "${scope_r:+--global}"
+          reply_text "$to" "✅ 已加规则：'$pat' → $mdl ${scope_r:+(global)}"
+          ;;
+        rm|remove)
+          local idx="${args_r%% *}"
+          local scope_r="${args_r#"$idx"}"; scope_r="${scope_r# }"
+          [[ -z "$idx" ]] && { reply_text "$to" "用法：/route rm <序号> [global]"; return 0; }
+          route_rm "$key" "$idx" "${scope_r:+--global}"
+          reply_text "$to" "✅ 已删除第 $idx 条 ${scope_r:+(global)}"
+          ;;
+        clear|reset)
+          route_clear "$key" "${args_r:+--global}"
+          reply_text "$to" "✅ 已清空 ${args_r:+global}路由规则"
+          ;;
+        *) reply_text "$to" "未知子命令：$sub_r。用法：/route [list|add <regex> <model> [global]|rm <n>|clear]" ;;
+      esac
+      return 0 ;;
+
+    /cost|/成本|/费用)
+      local scope_c="${rest:-day}"
+      case "$scope_c" in day|week|all) ;; *) scope_c="day" ;; esac
+      reply_text "$to" "$(cost_report "$scope_c")"
       return 0 ;;
 
     /automem|/自动记忆)
@@ -2251,6 +2306,16 @@ handle_event() {
   apply_account_defaults "$key" "$G_ACCOUNT_NAME" || true
   model=$(model_for_key "$key")
 
+  # Trigger-keyword routing: per-chat or global rules can override the model
+  # based on the user message content (see /route command, lib/router.sh).
+  if [[ -n "$G_TEXT" ]] && command -v route_for_text >/dev/null 2>&1; then
+    local _routed
+    if _routed=$(route_for_text "$key" "$G_TEXT") && [[ -n "$_routed" && "$_routed" != "$model" ]]; then
+      log "ROUTE key=$key '${G_TEXT:0:40}' $model -> $_routed"
+      model="$_routed"
+    fi
+  fi
+
   # Auto natural-language routing: turn plain text into /cmd via shortcut or LLM
   if [[ -n "$G_TEXT" ]] && [[ "$G_TEXT" != /* ]] && (( n_media == 0 )) && auto_is_on "$key"; then
     local routed=""
@@ -2384,6 +2449,9 @@ $hook_out"
   log "qoder returned ${#answer} chars"
   [[ -z "$answer" ]] && answer="(qodercli 没有返回内容，详见 $LOG_DIR/qoder.err)"
   reply_text "$G_REPLY_TO" "$answer"
+
+  # Coarse cost tracking (chars/3.5 ≈ tokens). See /cost command.
+  command -v cost_log >/dev/null 2>&1 && cost_log "$key" "$model" "${#prompt}" "${#answer}" || true
 
   # post_turn hook: stdin = reply (for logging/forwarding); stdout ignored
   HOOK_KEY="$key" HOOK_MODEL="$model" \

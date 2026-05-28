@@ -1,0 +1,23 @@
+[Unit]
+Description=mini_bot — multi-platform (WeChat + Lark/Feishu) bot powered by qodercli
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=__REPO__
+Environment=HOME=__HOME__
+Environment=PATH=__PATH__
+Environment=BOT_HOME=__STATE__
+Environment=LANG=en_US.UTF-8
+ExecStart=__BASH__ __REPO__/bot.sh
+Restart=always
+RestartSec=5
+StandardOutput=append:__LOG__/systemd.out
+StandardError=append:__LOG__/systemd.err
+
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=default.target

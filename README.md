@@ -82,6 +82,10 @@ bash bot.sh run
 | `/memory` / `/forget` | 看 / 清记忆 |
 | `/stream on` | 实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off） |
 | `/url off` | 消息含网址时关闭自动抓正文（默认 on） |
+| `/route add 代码\|debug claude-sonnet` | 关键词命中时临时换模型；首匹配生效 |
+| `/cost week` | 看本周 token / 估算费用（按模型分组） |
+| `/agent researcher 帮我整理 LLM 进展` | 一次性子代理（独立 session，不污染主对话） |
+| `/team set researcher critic editor` | 设管线；`/team run <task>` 依次跑完 |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
@@ -165,8 +169,18 @@ docker run -d --name mini_bot -p 8088:8088 \
 ```
 
 - macOS：写 `~/Library/LaunchAgents/com.mini-bot.plist`（公司 Mac 没权限时自动降级为 zsh 登录守护）
-- Linux：写 `~/.config/systemd/user/mini_bot.service`（无 systemctl 时同样降级）
+- Linux：写 `~/.config/systemd/user/mini_bot.service`（无 systemctl 时同样降级）；模板在 `scripts/systemd/mini_bot.service.template`
 - 降级模式：在仓库里放 `scripts/watchdog.sh` 守护进程 + 在你的 shell rc 里挂钩，登录即拉起，崩溃自动重启
+
+#### 日志切割（logrotate）
+
+```bash
+./scripts/install-service.sh rotate
+```
+
+- 有 sudo / /etc/logrotate.d 可写时 → 装到系统级 `/etc/logrotate.d/mini_bot`
+- 没权限时 → 写到 `~/.config/mini_bot/logrotate.conf`，并往用户 crontab 加一条整点跑 `logrotate` 的任务
+- 默认每天切割、保留 14 份、超过 50M 强切、压缩、`copytruncate`（不需要重启 bot）
 
 ---
 

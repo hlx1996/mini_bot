@@ -414,9 +414,12 @@ button:hover{background:#2ea043}
       <span style="font-weight:400;font-size:12px;margin-left:8px">
         过滤：
         <select id="ev_filter" onchange="refresh()" style="background:#0d1117;border:1px solid #30363d;color:#e8eaed;font-size:11px">
-          <option value="">全部</option>
+          <option value="">全部平台</option>
           <option value="wechat">仅 WeChat</option>
           <option value="lark">仅 Lark/Feishu</option>
+        </select>
+        <select id="ev_acct" onchange="refresh()" style="background:#0d1117;border:1px solid #30363d;color:#e8eaed;font-size:11px;margin-left:6px">
+          <option value="">全部账号</option>
         </select>
       </span>
     </h2>
@@ -508,10 +511,16 @@ async function refresh(){
       : `<tr><td colspan=6 class="muted">暂无会话</td></tr>`;
     $("events").innerHTML = (()=>{
       const filt = $("ev_filter") ? $("ev_filter").value : "";
+      const acct = $("ev_acct")   ? $("ev_acct").value   : "";
       const items = ev.slice().reverse().filter(e => {
-        if (!filt) return true;
         const p = (e.platform||"wechat");
-        return filt==="lark" ? (p==="lark"||p==="feishu") : (p===filt);
+        const a = (e.account_name||"");
+        if (filt) {
+          const platOk = filt==="lark" ? (p==="lark"||p==="feishu") : (p===filt);
+          if (!platOk) return false;
+        }
+        if (acct && a !== acct) return false;
+        return true;
       });
       if (!items.length) return `<tr><td colspan=5 class="muted">暂无事件</td></tr>`;
       return items.map(e=>{
@@ -548,6 +557,18 @@ async function refresh(){
     if (sel.dataset.labels !== labels) {
       sel.dataset.labels = labels;
       sel.innerHTML = ac.map(a=>`<option value="${esc(a.label||a.name)}">${esc(a.label||a.name)}</option>`).join("");
+    }
+    // populate event-filter account dropdown (uses bare account name to match event.account_name)
+    const evAcct = $("ev_acct");
+    if (evAcct) {
+      const evLabels = ac.map(a=>a.name).join("|");
+      if (evAcct.dataset.labels !== evLabels) {
+        const cur = evAcct.value;
+        evAcct.dataset.labels = evLabels;
+        evAcct.innerHTML = `<option value="">全部账号</option>` +
+          ac.map(a=>`<option value="${esc(a.name)}">${esc(a.label||a.name)}</option>`).join("");
+        evAcct.value = cur;
+      }
     }
     $("log").textContent = (lg.lines||[]).join("\n");
     $("log").scrollTop = $("log").scrollHeight;
