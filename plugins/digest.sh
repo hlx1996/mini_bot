@@ -119,7 +119,7 @@ $ans"
       return 0 ;;
 
     *)
-      reply_text "$to" "未知子命令：$sub。用法：/digest [list|now [hours]|add \"<cron>\"|rm <id>]"
+      reply_text "$to" "未知子命令：${sub}。用法：/digest [list|now [hours]|add \"<cron>\"|rm <id>]"
       return 0 ;;
   esac
 }

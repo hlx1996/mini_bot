@@ -1316,7 +1316,7 @@ example：/team set researcher critic editor"
           pipeline_out=$(team_run "$key" "$ws_t" "$mdl_t" "$args_team")
           reply_text "$to" "${pipeline_out:-(没有产出)}"
           ;;
-        *) reply_text "$to" "未知子命令：$sub_team。用法：/team [show|set <roles>|run <task>|clear]" ;;
+        *) reply_text "$to" "未知子命令：${sub_team}。用法：/team [show|set <roles>|run <task>|clear]" ;;
       esac
       return 0 ;;
 
@@ -1356,7 +1356,7 @@ example：/team set researcher critic editor"
           route_clear "$key" "${args_r:+--global}"
           reply_text "$to" "✅ 已清空 ${args_r:+global}路由规则"
           ;;
-        *) reply_text "$to" "未知子命令：$sub_r。用法：/route [list|add <regex> <model> [global]|rm <n>|clear]" ;;
+        *) reply_text "$to" "未知子命令：${sub_r}。用法：/route [list|add <regex> <model> [global]|rm <n>|clear]" ;;
       esac
       return 0 ;;
 
@@ -1419,7 +1419,7 @@ $(contact_recent 10)"
           contact_rm "$args_n"
           reply_text "$to" "✅ 已删除：$args_n"
           ;;
-        *) reply_text "$to" "未知子命令：$sub_n。用法：/nick [list|recent|add <名字> <id>|rm <名字>]" ;;
+        *) reply_text "$to" "未知子命令：${sub_n}。用法：/nick [list|recent|add <名字> <id>|rm <名字>]" ;;
       esac
       return 0 ;;
 
@@ -1429,7 +1429,7 @@ $(contact_recent 10)"
       local txt_m="${rest#"$nm_m"}"; txt_m="${txt_m# }"
       [[ -z "$nm_m" || -z "$txt_m" ]] && { reply_text "$to" "用法：/msg <名字> <文本>
 （先用 /nick add 注册昵称）"; return 0; }
-      local trip; trip=$(contact_get "$nm_m") || { reply_text "$to" "❌ 找不到昵称：$nm_m。/nick list 看看？"; return 0; }
+      local trip; trip=$(contact_get "$nm_m") || { reply_text "$to" "❌ 找不到昵称：${nm_m}。/nick list 看看？"; return 0; }
       if bridge_send "$nm_m" "$txt_m"; then
         reply_text "$to" "📤 已发给 $nm_m"
       else
@@ -1472,9 +1472,9 @@ $(bridge_list)
           bridge_pair "$kA" "$kB"
           # tell each side they're now bridged
           G_PLATFORM="$(echo "$tA"|cut -f1)" G_ACCOUNT_NAME="$(echo "$tA"|cut -f2)" \
-            reply_text "$(echo "$tA"|cut -f3)" "🌉 你现在与「$nameB」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
+            reply_text "$(echo "$tA"|cut -f3)" "🌉 你现在与「${nameB}」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
           G_PLATFORM="$(echo "$tB"|cut -f1)" G_ACCOUNT_NAME="$(echo "$tB"|cut -f2)" \
-            reply_text "$(echo "$tB"|cut -f3)" "🌉 你现在与「$nameA」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
+            reply_text "$(echo "$tB"|cut -f3)" "🌉 你现在与「${nameA}」桥接中，发任何文字都会直接转给对方。回复 /bridge off 取消（需找 bot）" || true
           reply_text "$to" "✅ 已桥接：$nameA ⇄ $nameB"
           ;;
       esac
@@ -1775,7 +1775,7 @@ $hits"
           local name="${rest#* }"; name="${name%% *}"
           if [[ -z "$name" || "$name" == "add" ]]; then reply_text "$to" "用法：/account add <name>"; return 0; fi
           echo "$name" >> "$ACCOUNTS_FILE"
-          reply_text "$to" "✅ 已加入 $name。请在终端运行：
+          reply_text "$to" "✅ 已加入 ${name}。请在终端运行：
   $PYTHON_BIN $WXLINK_BIN --account $name login
 然后 $0 重启后就会同时挂上该号。" ;;
         rm)
@@ -1786,7 +1786,7 @@ $hits"
             grep -vx "$name" "$ACCOUNTS_FILE" > "$ACCOUNTS_FILE.tmp" 2>/dev/null || true
             mv "$ACCOUNTS_FILE.tmp" "$ACCOUNTS_FILE"
           fi
-          reply_text "$to" "✅ 已从 accounts.list 移除 $name（重启后生效）。" ;;
+          reply_text "$to" "✅ 已从 accounts.list 移除 ${name}（重启后生效）。" ;;
         *)
           reply_text "$to" "用法：/account [list|add <n>|rm <n>]" ;;
       esac
@@ -1833,16 +1833,16 @@ $body"
       fi
       local name="${args%%=*}" body="${args#*=}"
       printf '%s\n' "$body" > "$SOULS_DIR/$name.txt"
-      reply_text "$to" "✅ 已保存 soul：$name（用 /soul $name 切换）"
+      reply_text "$to" "✅ 已保存 soul：${name}（用 /soul $name 切换）"
       ;;
     *)
       # /soul <name>  → switch
       if [[ -f "$SOULS_DIR/$sub.txt" ]]; then
         set_soul_for_key "$key" "$sub"
         reset_session "$key"   # new persona ⇒ fresh qoder session
-        reply_text "$to" "✅ 已切换 soul：$sub（已重置会话以应用新人格）"
+        reply_text "$to" "✅ 已切换 soul：${sub}（已重置会话以应用新人格）"
       else
-        reply_text "$to" "未找到 soul：$sub。/soul list 查看可用 soul。"
+        reply_text "$to" "未找到 soul：${sub}。/soul list 查看可用 soul。"
       fi
       ;;
   esac
@@ -1867,7 +1867,7 @@ $(memory_show "$key")"
       reply_text "$to" "🧹 长期记忆已清空。"
       ;;
     *)
-      reply_text "$to" "未知子命令：$sub。用法：/memory [show|add <text>|clear]"
+      reply_text "$to" "未知子命令：${sub}。用法：/memory [show|add <text>|clear]"
       ;;
   esac
 }
@@ -1897,7 +1897,7 @@ $body"
       [[ "$args" != "$a1" ]] && arest="${args#* }"
       [[ "$args" == "" ]] && { a1=""; arest=""; }
       local prompt; prompt=$(expand_skill "$name" "$a1" "$arest") || {
-        reply_text "$to" "未找到技能：$name（/skill list 查看）"; return
+        reply_text "$to" "未找到技能：${name}（/skill list 查看）"; return
       }
       log "SKILL run name=$name a1='$a1' rest='${arest:0:40}'"
       local workspace="$WORK_ROOT/$key"; mkdir -p "$workspace"
@@ -1922,7 +1922,7 @@ $(if [[ -f $MCP_CONFIG ]]; then echo "(qoder 会通过 --mcp-config 加载 $MCP_
       if [[ -f "$MCP_CONFIG" ]]; then
         reply_text "$to" "✅ mcp.json 将在下一轮 qoder 调用时生效（每次调用都会重读）。"
       else
-        reply_text "$to" "(没有 $MCP_CONFIG；放一个 {\"mcpServers\":{...}} 就行)"
+        reply_text "$to" "(没有 ${MCP_CONFIG}；放一个 {\"mcpServers\":{...}} 就行)"
       fi
       ;;
     *) reply_text "$to" "用法：/mcp [list|reload]" ;;
@@ -2230,7 +2230,7 @@ prompt: $prompt2"
       if rm_cron_by_tag "$args"; then
         reply_text "$to" "✅ 已删除 $args"
       else
-        reply_text "$to" "❌ 未找到 id：$args（用 /cron list 查看）"
+        reply_text "$to" "❌ 未找到 id：${args}（用 /cron list 查看）"
       fi
       ;;
     nl|自然语言)
@@ -2261,7 +2261,7 @@ cron: $expr
 任务: $task"
       ;;
     *)
-      reply_text "$to" "未知子命令：$sub。用 /help 查看用法。"
+      reply_text "$to" "未知子命令：${sub}。用 /help 查看用法。"
       ;;
   esac
 }
