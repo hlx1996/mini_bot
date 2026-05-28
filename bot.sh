@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh bridge.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh cost.sh bridge.sh plugins.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -1782,6 +1782,12 @@ $hits"
       esac
       return 0 ;;
   esac
+
+  # Plugin dispatch — let drop-in plugins (plugins/*.sh) handle their /cmd.
+  if command -v plugin_dispatch >/dev/null 2>&1 \
+     && plugin_dispatch "$to" "$key" "$text"; then
+    return 0
+  fi
   return 1
 }
 
@@ -2478,10 +2484,20 @@ handle_event() {
       [[ -n "$_name_from" ]] && _from_label="$_name_from"
       local _payload="[$_from_label]: ${G_TEXT}"
       if [[ -z "$G_TEXT" ]] && (( n_media > 0 )); then
-        _payload="[$_from_label] 发了 $n_media 个附件（暂未转发媒体，请直说重点）"
+        _payload="[$_from_label] 转发了 $n_media 个附件"
       fi
-      log "BRIDGE relay $_self_key -> $_peer_key (${#G_TEXT} chars)"
+      log "BRIDGE relay $_self_key -> $_peer_key (${#G_TEXT} chars, $n_media media)"
       G_PLATFORM="$_pp" G_ACCOUNT_NAME="$_pa" reply_text "$_pi" "$_payload" || true
+      # Forward each attachment as media to the peer.
+      if (( n_media > 0 )); then
+        local _entry _kind _path
+        while IFS=$'\t' read -r -d $'\t' _entry || [[ -n "$_entry" ]]; do
+          [[ -z "$_entry" ]] && continue
+          _kind="${_entry%%:*}"; _path="${_entry#*:}"
+          [[ -z "$_path" || ! -f "$_path" ]] && continue
+          G_PLATFORM="$_pp" G_ACCOUNT_NAME="$_pa" reply_media "$_pi" "$_path" "" || true
+        done < <(printf '%s\t' "$G_MEDIA")
+      fi
       return
     fi
   fi
@@ -2646,6 +2662,11 @@ cron_fire() {
     G_ACCOUNT_NAME="default"
   fi
   log "CRON fire key=$key platform=$G_PLATFORM prompt='${prompt:0:60}'"
+  # Slash-command prompts (e.g. "/digest now") go through handle_command so
+  # plugins can intercept; only fall back to qoder for plain prompts.
+  if [[ "$prompt" == /* ]] && command -v handle_command >/dev/null 2>&1; then
+    if handle_command "$to" "$key" "$prompt"; then return; fi
+  fi
   local ans
   ans=$(run_with_heartbeat "$to" "$key" "$workspace" "$model" "$prompt")
   [[ -z "$ans" ]] && ans="(定时任务没有产出)"
@@ -2726,6 +2747,9 @@ EOF
 }
 
 main() {
+  # Load drop-in plugins (plugins/*.sh) now that all helpers are defined.
+  command -v plugins_load >/dev/null 2>&1 && plugins_load
+
   case "${1:-}" in
     -h|--help)    usage; exit 0 ;;
     --self-test)  self_test; exit $? ;;

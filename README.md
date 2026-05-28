@@ -88,7 +88,9 @@ bash bot.sh run
 | `/team set researcher critic editor` | 设管线；`/team run <task>` 依次跑完 |
 | `/nick add 老王 last` | 把上一条消息的发件人记成「老王」（昵称簿） |
 | `/msg 老王 周会改到 3 点` | 按昵称直接发消息（自动选对平台 / 账号） |
-| `/bridge 老王 老李` | 双向桥接两人：消息互相转发，不走 qoder |
+| `/bridge 老王 老李` | 双向桥接两人：消息互相转发，包括图片/文件 |
+| `/broadcast 老王,老李,产品群 周会改到 3 点` | 群发到多个昵称 |
+| `/digest now 24` | 立即总结本会话最近 24h；`/digest add "0 9 * * *"` 每日定时 |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
@@ -156,7 +158,24 @@ python3 web.py --port 8088
 /msg 飞书老李 周会改到 3 点      # 不开桥，单条点对点发送
 ```
 
-桥接只转文本（媒体先回个占位提示，避免泄漏附件链接）；命令仍走 bot，所以随时能 `/bridge off`。
+桥接转发文本 **和** 媒体（图片/语音/文件原样转给对方）；命令仍走 bot，所以随时能 `/bridge off`。
+
+### 自定义插件（plugins/*.sh）
+
+任何放进 `plugins/` 的 `.sh` 文件，bot 启动时会自动 source。在文件里调一次
+`register_command "/foo" handler "短帮助"` 就多出一个 `/foo` 命令——所有内置
+helper（`reply_text`、`run_qoder_agent`、`contact_*`、`bridge_*` …）都能直接用。
+示例见 `plugins/broadcast.sh`（群发）和 `plugins/digest.sh`（聊天摘要）。
+
+```bash
+# plugins/hello.sh
+plugin_hello() {
+  local to="$1" key="$2" rest="$3"
+  reply_text "$to" "👋 hi! 你说：$rest"
+  return 0
+}
+register_command "/hello" plugin_hello "示例插件"
+```
 
 ### 加密保存对话/记忆
 
