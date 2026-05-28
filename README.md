@@ -80,6 +80,8 @@ bash bot.sh run
 | `/cron add "0 9 * * *" 早安` | 每天 9 点提醒 |
 | `/remember 我的生日是 5/1` | 长期记忆 |
 | `/memory` / `/forget` | 看 / 清记忆 |
+| `/stream on` | 实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off） |
+| `/url off` | 消息含网址时关闭自动抓正文（默认 on） |
 | `/backup` | 立即整库备份 |
 | `/usage day` | 看今日用量 |
 
@@ -152,6 +154,19 @@ docker run -d --name mini_bot -p 8088:8088 \
   -v $(pwd)/state:/app/state \
   mini_bot
 ```
+
+### 开机自启 / 后台常驻
+
+```bash
+./scripts/install-service.sh install     # 自动选择 launchd / systemd / 用户守护
+./scripts/install-service.sh status      # 看运行状态
+./scripts/install-service.sh restart     # 重启服务
+./scripts/install-service.sh uninstall   # 卸载
+```
+
+- macOS：写 `~/Library/LaunchAgents/com.mini-bot.plist`（公司 Mac 没权限时自动降级为 zsh 登录守护）
+- Linux：写 `~/.config/systemd/user/mini_bot.service`（无 systemctl 时同样降级）
+- 降级模式：在仓库里放 `scripts/watchdog.sh` 守护进程 + 在你的 shell rc 里挂钩，登录即拉起，崩溃自动重启
 
 ---
 

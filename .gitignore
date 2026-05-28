@@ -23,3 +23,5 @@ __pycache__/
 # Credentials
 .env
 *.token
+# state runtime
+state/watchdog.pid
