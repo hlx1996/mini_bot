@@ -1037,7 +1037,7 @@ handle_command() {
 
 — Multimodal generation —
   /image [n=N] [style=…] <prompt>
-  /tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]
+  /tts on|off|engine|voice [name|-]|rate [n|-]|style [name|-]|only [on|off]|max [N|-]
 — Streaming —
   /stream on|off               live-push 🤔/🔧 progress while qoder works (default off)
 
@@ -1131,7 +1131,7 @@ Send any text / image / voice / video / file directly — multi-turn context is 
 
 — 多模态生成 —
   /image [n=N] [style=…] <提示词>  AI 生成图片（多张/风格）
-  /tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]    语音回复（音色/语速/仅语音/字数上限）
+  /tts on|off|engine|voice [name|-]|rate [n|-]|style [name|-]|only [on|off]|max [N|-]    语音回复（音色/语速/风格/仅语音/字数上限）
 
 — 流式回复 —
   /stream on|off               实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off）
@@ -1656,7 +1656,56 @@ $voices
           else
             reply_text "$to" "❌ 需要数字。用法：/tts max <数字>"
           fi ;;
-        *)       reply_text "$to" "用法：/tts on|off|engine|voice [name|-]|rate [n|-]|only [on|off]|max [N|-]" ;;
+        style)
+          # Curated voice+rate presets (works on macOS `say`).
+          # Format in table: name|voice|rate|描述
+          local presets="婷婷|Tingting|180|普通话女声(柔)
+小美|Meijia|180|台湾女声
+善怡|Sinji|180|粤语女声
+奶奶|Grandma (中文（中国大陆）)|160|慈祥老人
+爷爷|Grandpa (中文（中国大陆）)|150|温厚老人
+小孩|Shelley (中文（中国大陆）)|200|童声
+快说|Tingting|260|很快
+慢说|Tingting|130|很慢
+机器人|Albert|180|英文机器风
+英式|Daniel|180|英式英语男声
+美式|Samantha|180|美式英语女声
+意大利|Alice|180|意大利女声
+法语|Amélie|180|法语女声
+日语|Kyoko|180|日语女声
+韩语|Yuna|180|韩语女声
+ASMR|Whisper|140|耳语风(英文)"
+          if [[ -z "$arg" || "$arg" == "list" || "$arg" == "ls" ]]; then
+            local cur_v cur_r
+            cur_v=$(tts_voice_get "$key"); cur_r=$(tts_rate_get "$key")
+            local listing
+            listing=$(echo "$presets" | awk -F'|' '{printf "  %-8s  %s\n", $1, $4}')
+            reply_text "$to" "🎨 /tts style — 一键切换音色风格
+当前：voice=${cur_v:-默认}  rate=${cur_r:-默认}
+$listing
+用法：/tts style <名字>   /tts style -   （-=恢复默认）"
+          elif [[ "$arg" == "-" ]]; then
+            rm -f "$SESS_DIR/$key.tts_voice" "$SESS_DIR/$key.tts_rate"
+            reply_text "$to" "✅ 已恢复默认音色和语速"
+          else
+            local row v r d
+            row=$(echo "$presets" | awk -F'|' -v n="$arg" '$1==n {print; exit}')
+            if [[ -z "$row" ]]; then
+              reply_text "$to" "❌ 没有这个风格：$arg
+可用：$(echo "$presets" | cut -d'|' -f1 | paste -sd' ' -)"
+            else
+              v=$(echo "$row" | cut -d'|' -f2)
+              r=$(echo "$row" | cut -d'|' -f3)
+              d=$(echo "$row" | cut -d'|' -f4)
+              tts_voice_set "$key" "$v"
+              tts_rate_set  "$key" "$r"
+              reply_text "$to" "✅ 已切换到「$arg」（$d）
+  voice: $v
+  rate:  $r
+（接下来的回复都会用这个声音）"
+            fi
+          fi ;;
+        *)       reply_text "$to" "用法：/tts on|off|engine|voice [name|-]|rate [n|-]|style [name|-]|only [on|off]|max [N|-]" ;;
       esac
       return 0 ;;
 
