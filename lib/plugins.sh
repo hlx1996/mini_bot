@@ -63,6 +63,21 @@ plugin_dispatch() {
   local to="$1" key="$2" text="$3"
   local cmd="${text%% *}" rest=""
   [[ "$text" != "$cmd" ]] && rest="${text#* }"
+
+  # Per-message file-based alias resolution (so /alias works across forked workers).
+  # 顺序：chat 级 → 全局
+  local alias_dir="${BOT_HOME:-./state}/aliases"
+  local resolved=""
+  if [[ -s "${alias_dir}/${key}.tsv" ]]; then
+    resolved=$(awk -F'\t' -v a="$cmd" '$1==a {print $2; exit}' "${alias_dir}/${key}.tsv" 2>/dev/null)
+  fi
+  if [[ -z "$resolved" && -s "${alias_dir}/_global.tsv" ]]; then
+    resolved=$(awk -F'\t' -v a="$cmd" '$1==a {print $2; exit}' "${alias_dir}/_global.tsv" 2>/dev/null)
+  fi
+  if [[ -n "$resolved" ]]; then
+    cmd="$resolved"
+  fi
+
   local idx; idx=$(_plugin_lookup "$cmd") || return 1
   "${_PLUGIN_FNS[$idx]}" "$to" "$key" "$rest"
 }

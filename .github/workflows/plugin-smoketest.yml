@@ -1,0 +1,35 @@
+name: plugin-smoketest
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'plugins/**'
+      - 'lib/plugins.sh'
+      - 'scripts/plugin-smoketest.sh'
+      - '.github/workflows/plugin-smoketest.yml'
+  pull_request:
+    paths:
+      - 'plugins/**'
+      - 'lib/plugins.sh'
+      - 'scripts/plugin-smoketest.sh'
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Bash + Python info
+        run: |
+          bash --version | head -1
+          python3 --version
+
+      - name: Static smoke test (no network)
+        run: bash scripts/plugin-smoketest.sh --no-net
+
+      - name: Static + network reachability
+        # 网络部分仅做参考；endpoint 不可达不让 PR 失败
+        run: bash scripts/plugin-smoketest.sh || true
