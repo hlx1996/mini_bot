@@ -319,6 +319,13 @@ register_command "/hello" plugin_hello "示例插件"
   一张静态地图。免 key。
 - `/currency <金额> <FROM> <TO>`：汇率换算，open.er-api.com，免 key。
   支持 `/currency 100 USD CNY` 也支持 `/currency USD CNY`（按 1 单位查）。
+- `/wiki <关键词> [lang=zh|en|ja|...]`：维基百科摘要（REST API，免 key）。
+- `/dict <英文单词>`：英文词典（dictionaryapi.dev，免 key，含音标 / 释义 / 例句 / 近义词）。
+- `/pypi <pkg>` / `/npm <pkg>` / `/docker <image>`：包/镜像信息，pypi.org /
+  registry.npmjs.org / hub.docker.com 公开 API，全部免 key。
+- `/code <q>`：GitHub 代码搜索，**必须** `GITHUB_TOKEN`（GitHub 强制登录）。
+- `/plugins list|info|disable|enable|reload`：插件管理。`disable/enable` 把插件
+  写到 `$BOT_HOME/plugins.disabled`，重启 bot 后生效。`/plugins` 自身不能被禁。
 
 > 以上插件除模型/浏览器外都是纯命令行 + 公共免费 API，可以在公司机内网映射
 > 出口直跑；要离线运行的请用 `/diagram` `/calc` `/run` `/qrcode (qrencode)`
@@ -333,6 +340,18 @@ register_command "/hello" plugin_hello "示例插件"
 - `plugins/stats.sh` — `/stats` `/usage` `/export` `/quota`
 - `plugins/backup.sh` — `/backup`（管理员）
 - `plugins/admin.sh` — `/admin` `/whitelist` `/lang`
+- `plugins/mute.sh` — `/mute` `/unmute` `/whoami` `/say`
+
+### 插件 smoke test
+
+```
+bash scripts/plugin-smoketest.sh             # 静态检查 + 联网 ping
+bash scripts/plugin-smoketest.sh --no-net    # 跳过联网
+```
+
+- 静态：`bash -n` 语法 / 至少注册一个命令 / handler 签名 / CJK-跟-`$var` 模式
+- 联网：对 14 个第三方 API 的 5 秒可达性探测
+- 退出码 = 静态失败的插件数
 
 ### 智能记忆检索（BM25 + 字符二元）
 
