@@ -37,8 +37,57 @@ plugin_paper() {
     sleep 3
   done
   if [[ -z "$xml" ]] || [[ "$xml" =~ "Rate exceeded" ]]; then
-    reply_text "$to" "❌ arXiv 暂时不可用（${xml:-no response}）"
-    return 1
+    # Semantic Scholar 兜底（免 key、500/5min/IP）
+    reply_text "$to" "⚠️ arXiv 限速，切到 Semantic Scholar …"
+    local ss_url ss_json
+    if [[ -n "$id" ]]; then
+      ss_url="https://api.semanticscholar.org/graph/v1/paper/arXiv:${id}?fields=title,abstract,authors.name,year,externalIds,openAccessPdf"
+    else
+      local enc2; enc2=$(jq -rn --arg s "$rest" '$s|@uri')
+      ss_url="https://api.semanticscholar.org/graph/v1/paper/search?query=${enc2}&limit=1&fields=title,abstract,authors.name,year,externalIds,openAccessPdf"
+    fi
+    ss_json=$(curl -sSL --max-time 25 --user-agent 'mini-bot/1.0' \
+      ${SEMANTIC_SCHOLAR_KEY:+-H "x-api-key: ${SEMANTIC_SCHOLAR_KEY}"} \
+      "$ss_url" 2>/dev/null)
+    if [[ -z "$ss_json" ]] || ! printf '%s' "$ss_json" | jq -e . >/dev/null 2>&1; then
+      reply_text "$to" "❌ arXiv 限速且 Semantic Scholar 也无响应"
+      return 1
+    fi
+    if printf '%s' "$ss_json" | jq -e '.code=="429"' >/dev/null 2>&1; then
+      reply_text "$to" "❌ arXiv 和 Semantic Scholar 都在限速。可以申请 Semantic Scholar 免费 key 后设置 SEMANTIC_SCHOLAR_KEY 环境变量：
+https://www.semanticscholar.org/product/api#api-key-form"
+      return 1
+    fi
+    # 统一字段
+    local title authors pub link abs
+    title=$(printf '%s' "$ss_json"  | jq -r '(.data[0]//.) | .title // ""')
+    authors=$(printf '%s' "$ss_json" | jq -r '(.data[0]//.) | (.authors // []) | map(.name) | .[0:6] | join(", ")')
+    pub=$(printf '%s' "$ss_json"    | jq -r '(.data[0]//.) | (.year // "") | tostring')
+    link=$(printf '%s' "$ss_json"   | jq -r '(.data[0]//.) | (.openAccessPdf.url // ("https://arxiv.org/abs/" + (.externalIds.ArXiv // "")))')
+    abs=$(printf '%s' "$ss_json"    | jq -r '(.data[0]//.) | .abstract // ""')
+    if [[ -z "$abs" || "$abs" == "null" ]]; then
+      reply_text "$to" "❌ 没找到论文（或摘要为空）"; return 1
+    fi
+    local key2; key2=$(_chat_key "$to")
+    local workspace2; workspace2="$WORKSPACE_DIR/$key2"; mkdir -p "$workspace2"
+    local model2; model2=$(model_for_key "$key2")
+    local prompt2="把下面论文摘要翻译成中文，并用 5 个要点（# 编号）总结核心贡献、方法、实验、结论：
+
+标题：${title}
+作者：${authors}
+${abs}"
+    local ans2
+    ans2=$(run_with_heartbeat "$to" "$key2" "$workspace2" "$model2" "$prompt2" 2>/dev/null) || ans2=""
+    [[ -z "$ans2" ]] && ans2="（总结失败，仅返回原文）
+
+${abs}"
+    reply_text "$to" "📄 ${title}
+👤 ${authors}
+📅 ${pub}
+🔗 ${link}
+
+${ans2}"
+    return 0
   fi
   local meta
   meta=$(printf '%s' "$xml" | python3 -c '
