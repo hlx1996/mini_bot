@@ -44,7 +44,28 @@ try:
 except FileNotFoundError:
     print("（无日志）"); raise SystemExit
 
-if sub == "errors":
+if sub == "commands":
+    cmd_log = os.path.join(os.path.dirname(log), "..", "metrics", "commands.tsv")
+    cmd_log = os.path.normpath(cmd_log)
+    c = Counter()
+    try:
+        with open(cmd_log) as f:
+            for ln in f:
+                try:
+                    ts_s, cmd = ln.rstrip("\n").split("\t", 1)
+                    if int(ts_s) < cutoff:
+                        continue
+                    c[cmd] += 1
+                except Exception:
+                    continue
+    except FileNotFoundError:
+        print("（无 commands.tsv，尚未有任何插件调用）"); raise SystemExit
+    print("🧮 插件调用 Top20  窗口 {}".format(wl or "24h"))
+    for k, n in c.most_common(20):
+        print("  {:>4}  {}".format(n, k))
+    if not c:
+        print("（窗口内无调用）")
+elif sub == "errors":
     errs = [o for o in events if o.get("kind") == "reply" and not o.get("ok", True)]
     errs = errs[-10:]
     print("❌ 最近失败回复（{} 条）".format(len(errs)))
@@ -106,7 +127,7 @@ else:
     print("  按平台：")
     for p, (i, o) in sorted(by_plat.items()):
         print("    {}: in {} / out {}".format(p, i, o))
-    print("  细分：/metrics chat  /metrics errors  /metrics 7d")
+    print("  细分：/metrics chat  /metrics errors  /metrics commands  /metrics 7d")
 PYEOF
 }
 
@@ -117,7 +138,7 @@ plugin_metrics() {
   local sub win
   local first="${args%% *}"
   case "$first" in
-    chat|errors)  sub="$first"; win="${args#* }"; [[ "$win" == "$args" ]] && win="24h" ;;
+    chat|errors|commands)  sub="$first"; win="${args#* }"; [[ "$win" == "$args" ]] && win="24h" ;;
     "")           sub=""; win="24h" ;;
     *)            sub=""; win="$first" ;;
   esac
@@ -127,4 +148,4 @@ plugin_metrics() {
   reply_text "$to" "$out"
 }
 
-register_command "/metrics" plugin_metrics "可观测：/metrics [1h|24h|7d|all] | chat | errors"
+register_command "/metrics" plugin_metrics "可观测：/metrics [1h|24h|7d|all] | chat | errors | commands"

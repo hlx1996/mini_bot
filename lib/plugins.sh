@@ -79,6 +79,10 @@ plugin_dispatch() {
   fi
 
   local idx; idx=$(_plugin_lookup "$cmd") || return 1
+  # 记一笔调用：BOT_HOME/metrics/commands.tsv 行: epoch\tcmd
+  local mdir="${BOT_HOME:-./state}/metrics"
+  mkdir -p "$mdir" 2>/dev/null
+  printf '%s\t%s\n' "$(date +%s)" "$cmd" >> "$mdir/commands.tsv" 2>/dev/null || true
   "${_PLUGIN_FNS[$idx]}" "$to" "$key" "$rest"
 }
 
