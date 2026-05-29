@@ -62,11 +62,15 @@ plugin_dispatch() {
 }
 
 plugin_help() {
-  # Pretty list for /help
+  # Pretty list for /help — ASCII command names only (drop CJK aliases).
   ((${#_PLUGIN_CMDS[@]}==0)) && return 0
   echo "— Plugins —"
   local i pairs
   pairs=$(for ((i=0; i<${#_PLUGIN_CMDS[@]}; i++)); do
+    # skip CJK / non-ASCII command names (alias rows)
+    if printf '%s' "${_PLUGIN_CMDS[$i]}" | LC_ALL=C grep -q '[^[:print:]]\|[^ -~]'; then
+      continue
+    fi
     printf '%s\t%s\n' "${_PLUGIN_CMDS[$i]}" "${_PLUGIN_HELPS[$i]}"
   done | sort -u)
   printf '%s\n' "$pairs" | awk -F'\t' '{printf "  %-28s %s\n", $1, $2}'
