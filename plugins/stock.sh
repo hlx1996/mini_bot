@@ -65,4 +65,3 @@ print(m.group(1) if m else "")
 }
 
 register_command "/stock" plugin_stock "股票/加密报价：/stock <ticker>"
-register_command "/股票"   plugin_stock "股票/加密报价：/股票 <ticker>"

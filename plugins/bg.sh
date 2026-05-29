@@ -130,4 +130,3 @@ $out
 }
 
 register_command "/bg"   plugin_bg "后台思考：/bg <问题> 立即回 🤔，跑完再推；/bg list|cancel"
-register_command "/思考" plugin_bg "后台思考：/思考 <问题>"

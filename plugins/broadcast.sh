@@ -47,4 +47,3 @@ plugin_broadcast() {
 }
 
 register_command "/broadcast" plugin_broadcast "群发：/broadcast <名字1,名字2,...> <消息>"
-register_command "/群发"      plugin_broadcast "群发：/群发 <名字1,名字2,...> <消息>"

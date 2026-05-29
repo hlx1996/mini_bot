@@ -69,4 +69,3 @@ $mmd"
 }
 
 register_command "/diagram" plugin_diagram "画图：/diagram <需求>（自然语言转 mermaid + 渲染 PNG）"
-register_command "/画图"     plugin_diagram "画图：/画图 <需求>"

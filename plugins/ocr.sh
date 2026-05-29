@@ -67,4 +67,3 @@ $txt"
 }
 
 register_command "/ocr"   plugin_ocr "图转文字：/ocr [图路径]（默认取最近一张图）"
-register_command "/识图"  plugin_ocr "图转文字：/识图"

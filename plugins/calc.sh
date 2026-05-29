@@ -79,4 +79,3 @@ PY
 }
 
 register_command "/calc" plugin_calc "安全计算：/calc <表达式>"
-register_command "/算" plugin_calc "安全计算：/算 <表达式>"

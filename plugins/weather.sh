@@ -30,4 +30,3 @@ ${detail}"
 }
 
 register_command "/weather" plugin_weather "查天气：/weather <城市|地名>"
-register_command "/天气"    plugin_weather "查天气：/天气 <城市|地名>"

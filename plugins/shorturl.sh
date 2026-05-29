@@ -30,4 +30,3 @@ plugin_shorturl() {
 }
 
 register_command "/shorturl" plugin_shorturl "短链接：/shorturl <url>"
-register_command "/短链"     plugin_shorturl "短链接：/短链 <url>"

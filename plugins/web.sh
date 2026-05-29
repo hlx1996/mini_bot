@@ -67,4 +67,3 @@ $body"
 }
 
 register_command "/web"  plugin_web "抓网页 → qoder 总结：/web <url> [问题]"
-register_command "/网页" plugin_web "抓网页 → qoder 总结：/网页 <url> [问题]"
