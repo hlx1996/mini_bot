@@ -125,4 +125,3 @@ $ans"
 }
 
 register_command "/digest" plugin_digest "聊天摘要：/digest now [小时] | add <cron> | rm <id>"
-register_command "/摘要"   plugin_digest "聊天摘要：/摘要 now [小时] | add <cron> | rm <id>"

@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done

@@ -31,4 +31,3 @@ plugin_qrcode() {
 }
 
 register_command "/qrcode" plugin_qrcode "生成二维码：/qrcode <文本|URL>"
-register_command "/二维码"  plugin_qrcode "生成二维码：/二维码 <文本|URL>"

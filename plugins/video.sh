@@ -73,4 +73,3 @@ $video_url
 }
 
 register_command "/video"   plugin_video "海螺 AI 视频（实验，需本机 Chrome 登录）：/video <prompt>"
-register_command "/海螺"    plugin_video "海螺 AI 视频：/海螺 <prompt>"

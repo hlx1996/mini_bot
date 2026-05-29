@@ -49,4 +49,3 @@ $body"
 }
 
 register_command "/translate-doc" plugin_translate_doc "翻译网页/文本：/translate-doc <url|text> [target=zh|en|...]"
-register_command "/翻译"           plugin_translate_doc "翻译网页/文本：/翻译 <url|text> [target=zh|en|...]"

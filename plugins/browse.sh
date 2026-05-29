@@ -78,4 +78,3 @@ $body"
 }
 
 register_command "/browse" plugin_browse "浏览器抓取：/browse <url> [问题]"
-register_command "/浏览"   plugin_browse "浏览器抓取：/浏览 <url> [问题]"
