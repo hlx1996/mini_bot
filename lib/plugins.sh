@@ -43,9 +43,15 @@ _plugin_lookup() {
 
 plugins_load() {
   [[ -d "$PLUGINS_DIR" ]] || return 0
-  local f
+  local disabled_file="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.disabled"
+  local f base
   for f in "$PLUGINS_DIR"/*.sh; do
     [[ -f "$f" ]] || continue
+    base=$(basename "$f" .sh)
+    if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
+      command -v log >/dev/null 2>&1 && log "plugin skipped (disabled): $base" || true
+      continue
+    fi
     if ! source "$f"; then
       command -v log >/dev/null 2>&1 && log "plugin load FAIL: $f" || echo "plugin load FAIL: $f" >&2
     fi
