@@ -299,8 +299,30 @@ register_command "/hello" plugin_hello "示例插件"
 - `/stock <ticker>`（别名 `/股票`）：股票/加密报价。A股/港股走腾讯免费接口
   （symbol 形如 `sh600519`/`sz000001`/`hk00700`），美股/加密走 Yahoo
   Finance（在大陆可能被墙）。
-- `/paper <arxiv-id|url|关键词>`（别名 `/论文`）：取 arXiv 摘要并让 qoder
-  总结成中文要点。arXiv 公共 API 对单 IP 有速率限制，已经内置 3 次重试。
+- `/paper <arxiv-id|url|关键词>`（别名 `/论文`）：三档源轮询 ——
+  **OpenAlex**（默认，免 key、限速宽松）→ **arXiv**（公共 API，有 3 次重试）→
+  **Semantic Scholar**（设 `SEMANTIC_SCHOLAR_KEY` 后启用，[申请入口](https://www.semanticscholar.org/product/api#api-key-form)）。
+  拿到摘要后让 qoder 翻成中文 + 5 条要点。
+- `/movie <片名> [year=YYYY] [lang=zh|en]`：查电影，Wikipedia OpenSearch +
+  REST summary API，无需 key。
+- `/recipe <食材或菜名> [n=3]`：查菜谱，TheMealDB（英文菜谱库），中文输入会
+  自动让 qoder 翻译成英文再查。
+- `/translate-image [target=zh|en|...] [图片路径]`：图片 OCR + 翻译。复用
+  `/ocr` 的 tesseract / 多模态降级链，再让 qoder 翻成目标语言。不给路径时
+  自动取本会话最近一张图。
+
+> 以上插件除模型/浏览器外都是纯命令行 + 公共免费 API，可以在公司机内网映射
+> 出口直跑；要离线运行的请用 `/diagram` `/calc` `/run` `/qrcode (qrencode)`
+> `/ocr (tesseract)`。
+
+#### Phase B：原生命令也已插件化
+
+下列原本写在 `bot.sh` case 分支里的命令，已经搬到 `plugins/` 下，方便单独
+关闭/替换（直接删对应 `plugins/*.sh` 即可，bot.sh 里的旧分支仍然兜底）：
+
+- `plugins/pin.sh` — `/pin list|on|off|add|rm`（常驻提示词）
+- `plugins/stats.sh` — `/stats` `/usage` `/export` `/quota`
+- `plugins/backup.sh` — `/backup`（管理员）
 
 ### 智能记忆检索（BM25 + 字符二元）
 
