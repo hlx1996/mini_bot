@@ -1228,6 +1228,10 @@ handle_command() {
   /account [list|add|rm]       multi-WeChat account mgmt
 
 Send any text / image / voice / video / file directly — multi-turn context is remembered."
+        if command -v plugin_help >/dev/null 2>&1; then
+          local ph; ph=$(plugin_help)
+          [[ -n "$ph" ]] && reply_text "$to" "$ph"
+        fi
         return 0
       fi
       reply_text "$to" "📖 mini_bot 命令一览（按功能分组）
@@ -1344,6 +1348,10 @@ Send any text / image / voice / video / file directly — multi-turn context is 
   /account [list|add|rm]       微信账号管理（多账号模式）
 
 直接发文字 / 图片 / 语音 / 视频 / 文件即可，多轮上下文我会记住。"
+      if command -v plugin_help >/dev/null 2>&1; then
+        local ph; ph=$(plugin_help)
+        [[ -n "$ph" ]] && reply_text "$to" "$ph"
+      fi
       return 0 ;;
 
     /model)
