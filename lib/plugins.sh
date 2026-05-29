@@ -13,6 +13,7 @@
 # memory_*, contact_*, bridge_*, ...) are in scope. Keep them small.
 
 PLUGINS_DIR="${PLUGINS_DIR:-$SCRIPT_DIR/plugins}"
+PLUGINS_EXTRA_DIR="${PLUGINS_EXTRA_DIR:-$SCRIPT_DIR/plugins-extra}"
 
 # Parallel indexed arrays (bash 3.2 has no associative arrays).
 _PLUGIN_CMDS=()
@@ -42,20 +43,44 @@ _plugin_lookup() {
 }
 
 plugins_load() {
-  [[ -d "$PLUGINS_DIR" ]] || return 0
   local disabled_file="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.disabled"
+  local enabled_extra="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.extra.enabled"
   local f base
-  for f in "$PLUGINS_DIR"/*.sh; do
-    [[ -f "$f" ]] || continue
-    base=$(basename "$f" .sh)
-    if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
-      command -v log >/dev/null 2>&1 && log "plugin skipped (disabled): $base" || true
-      continue
-    fi
-    if ! source "$f"; then
-      command -v log >/dev/null 2>&1 && log "plugin load FAIL: $f" || echo "plugin load FAIL: $f" >&2
-    fi
-  done
+
+  # 1) core 目录：默认全部加载
+  if [[ -d "$PLUGINS_DIR" ]]; then
+    for f in "$PLUGINS_DIR"/*.sh; do
+      [[ -f "$f" ]] || continue
+      base=$(basename "$f" .sh)
+      if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
+        command -v log >/dev/null 2>&1 && log "plugin skipped (disabled): $base" || true
+        continue
+      fi
+      if ! source "$f"; then
+        command -v log >/dev/null 2>&1 && log "plugin load FAIL: $f" || echo "plugin load FAIL: $f" >&2
+      fi
+    done
+  fi
+
+  # 2) extra 目录：opt-in。整体开关 PLUGINS_EXTRA_ALL=1 全开；
+  #    否则只加载 plugins.extra.enabled 里列出的 stem（一行一个）。
+  if [[ -d "$PLUGINS_EXTRA_DIR" ]]; then
+    local all="${PLUGINS_EXTRA_ALL:-0}"
+    for f in "$PLUGINS_EXTRA_DIR"/*.sh; do
+      [[ -f "$f" ]] || continue
+      base=$(basename "$f" .sh)
+      if [[ "$all" != "1" ]]; then
+        [[ -f "$enabled_extra" ]] || continue
+        LC_ALL=C grep -qx "$base" "$enabled_extra" 2>/dev/null || continue
+      fi
+      if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
+        continue
+      fi
+      if ! source "$f"; then
+        command -v log >/dev/null 2>&1 && log "plugin-extra load FAIL: $f" || echo "plugin-extra load FAIL: $f" >&2
+      fi
+    done
+  fi
 }
 
 plugin_dispatch() {
