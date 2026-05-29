@@ -292,6 +292,15 @@ register_command "/hello" plugin_hello "示例插件"
   Chrome；命令本身不弹窗，全程后台。
   > 安装 playwright：`cd ~/Projects/mini_bot && npm install playwright && \
   >   npx playwright install chromium`
+- `/weather <地名>`（别名 `/天气`）：查天气，走 wttr.in（免 key、无需代理）。
+- `/qrcode <文本|URL>`（别名 `/二维码`）：生成二维码。本地有 `qrencode` 命令
+  时走离线，否则用 api.qrserver.com。
+- `/shorturl <url>`（别名 `/短链`）：短链接，先 tinyurl 再 is.gd 兜底。
+- `/stock <ticker>`（别名 `/股票`）：股票/加密报价。A股/港股走腾讯免费接口
+  （symbol 形如 `sh600519`/`sz000001`/`hk00700`），美股/加密走 Yahoo
+  Finance（在大陆可能被墙）。
+- `/paper <arxiv-id|url|关键词>`（别名 `/论文`）：取 arXiv 摘要并让 qoder
+  总结成中文要点。arXiv 公共 API 对单 IP 有速率限制，已经内置 3 次重试。
 
 ### 智能记忆检索（BM25 + 字符二元）
 
