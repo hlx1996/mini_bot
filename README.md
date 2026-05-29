@@ -3,6 +3,8 @@
 > 一个 bash 写的聊天机器人。把你的 **微信** 或 **飞书** 接到 qoder-cli（或任何命令行 LLM），用户聊天，bot 回复。
 >
 > English: [README.en.md](./README.en.md)
+>
+> **📖 80 插件 / 97 命令完整索引 + 示例 → [PLUGINS.md](./PLUGINS.md)**
 
 ---
 
