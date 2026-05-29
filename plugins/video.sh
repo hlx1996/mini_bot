@@ -56,13 +56,20 @@ $(tail -3 "$LOG_DIR/browse.err" 2>/dev/null)"
   fi
   reply_text "$to" "✅ 视频已生成：
 $video_url
-（链接通常在海螺账号下保留若干天）"
-  # 尝试下载并发到群里
-  local mp4; mp4=$(mktemp); mp4="${mp4}.mp4"
-  if curl -sSL --max-time 120 -o "$mp4" "$video_url" 2>/dev/null && [[ -s "$mp4" ]]; then
-    command -v reply_media >/dev/null 2>&1 && reply_media "$to" "$mp4" 2>/dev/null || true
+（链接通常在海螺账号下保留若干天，正在下载并发送原文件…）"
+  # 下载并发到聊天（保存到 IMAGE_DIR/video，便于事后查）
+  local vdir="${IMAGE_DIR:-/tmp}/video"; mkdir -p "$vdir"
+  local mp4="${vdir}/hailuo_$(date +%Y%m%d_%H%M%S)_${RANDOM}.mp4"
+  if curl -fsSL --max-time 180 -o "$mp4" "$video_url" && [[ -s "$mp4" ]]; then
+    local size; size=$(wc -c <"$mp4" | tr -d ' ')
+    if (( size > 100*1024*1024 )); then
+      reply_text "$to" "⚠️ 视频 ${size} bytes 超过 100MB，未上传原文件（仅链接）"
+    else
+      reply_media "$to" "$mp4" "🎞️ 海螺生成（$(numfmt --to=iec ${size} 2>/dev/null || echo ${size}B)）"
+    fi
+  else
+    reply_text "$to" "⚠️ 视频下载失败，请点上面链接查看"
   fi
-  rm -f "$mp4"
 }
 
 register_command "/video"   plugin_video "海螺 AI 视频（实验，需本机 Chrome 登录）：/video <prompt>"
