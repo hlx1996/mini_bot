@@ -11,6 +11,15 @@ if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then
 fi
 echo $$ > "$PID_FILE"
 cd "$REPO_DIR"
+# Make ~/.local/bin and ~/Library/Python/*/bin visible for pip-installed CLIs
+# (yt-dlp / tesseract / etc may live there on macOS/Linux without root).
+for _p in "$HOME/.local/bin" "$HOME/bin" "/opt/homebrew/bin" "/usr/local/bin"; do
+  [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && PATH="$_p:$PATH"
+done
+for _p in "$HOME"/Library/Python/*/bin; do
+  [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && PATH="$_p:$PATH"
+done
+export PATH
 export BOT_HOME="$STATE_DIR"
 # Load .env (optional) — for AZURE_SPEECH_KEY / OPENAI_API_KEY / etc
 if [[ -f "$REPO_DIR/.env" ]]; then

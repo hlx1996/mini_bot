@@ -310,6 +310,15 @@ register_command "/hello" plugin_hello "示例插件"
 - `/translate-image [target=zh|en|...] [图片路径]`：图片 OCR + 翻译。复用
   `/ocr` 的 tesseract / 多模态降级链，再让 qoder 翻成目标语言。不给路径时
   自动取本会话最近一张图。
+- `/github owner/repo | @user | <关键词>`：GitHub 仓库/用户/搜索。
+  无 key 限速 60/hr，配置 `GITHUB_TOKEN` 提升到 5000/hr。
+- `/youtube <url|关键词>`：YouTube 视频信息或搜索。优先 `yt-dlp`
+  （`pip install --user yt-dlp`，会被 watchdog 自动加进 PATH），兜底
+  noembed.com 元数据 + piped 公开实例。
+- `/map <地名>`：Nominatim 地名 → 经纬度 + OSM/高德链接 + staticmap.openstreetmap.de
+  一张静态地图。免 key。
+- `/currency <金额> <FROM> <TO>`：汇率换算，open.er-api.com，免 key。
+  支持 `/currency 100 USD CNY` 也支持 `/currency USD CNY`（按 1 单位查）。
 
 > 以上插件除模型/浏览器外都是纯命令行 + 公共免费 API，可以在公司机内网映射
 > 出口直跑；要离线运行的请用 `/diagram` `/calc` `/run` `/qrcode (qrencode)`
@@ -323,6 +332,7 @@ register_command "/hello" plugin_hello "示例插件"
 - `plugins/pin.sh` — `/pin list|on|off|add|rm`（常驻提示词）
 - `plugins/stats.sh` — `/stats` `/usage` `/export` `/quota`
 - `plugins/backup.sh` — `/backup`（管理员）
+- `plugins/admin.sh` — `/admin` `/whitelist` `/lang`
 
 ### 智能记忆检索（BM25 + 字符二元）
 
