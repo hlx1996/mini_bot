@@ -326,6 +326,17 @@ register_command "/hello" plugin_hello "示例插件"
 - `/code <q>`：GitHub 代码搜索，**必须** `GITHUB_TOKEN`（GitHub 强制登录）。
 - `/plugins list|info|disable|enable|reload`：插件管理。`disable/enable` 把插件
   写到 `$BOT_HOME/plugins.disabled`，重启 bot 后生效。`/plugins` 自身不能被禁。
+- `/hn [N=10]`：Hacker News Top（firebaseio，免 key）。
+- `/reddit <sub> [n=10]`：Reddit 热帖。Reddit 对匿名访问限速较严，频繁调用会 429。
+- `/translate [target=zh|en|...] <文本>`：纯文本翻译（让 qoder 翻），保留 markdown。
+- `/poem [random|<关键词>]`：诗词。无关键词走 jinrishici.com 随机；有关键词让
+  qoder 选一首并解读。
+- `/idiom <成语>`：中文成语解释（拼音/释义/出处/典故/用法/近反义词）。
+- `/pomodoro <分钟> [备注] | list | cancel <PID>`：番茄钟，后台 sleep + 到点
+  自动回 IM 提醒。
+- `/alias [add|rm|clear|list]`：用户自定义命令别名。`/alias add /yt /youtube`
+  即时生效（plugin_dispatch 在每次消息时读 `$BOT_HOME/aliases/*.tsv`），
+  支持 `-g` 全局别名；仅能别名到 plugins 提供的命令。
 
 > 以上插件除模型/浏览器外都是纯命令行 + 公共免费 API，可以在公司机内网映射
 > 出口直跑；要离线运行的请用 `/diagram` `/calc` `/run` `/qrcode (qrencode)`
@@ -341,6 +352,7 @@ register_command "/hello" plugin_hello "示例插件"
 - `plugins/backup.sh` — `/backup`（管理员）
 - `plugins/admin.sh` — `/admin` `/whitelist` `/lang`
 - `plugins/mute.sh` — `/mute` `/unmute` `/whoami` `/say`
+- `plugins/core.sh` — `/model` `/status` `/cancel` `/news` `/hooks` `/card`
 
 ### 插件 smoke test
 
@@ -352,6 +364,10 @@ bash scripts/plugin-smoketest.sh --no-net    # 跳过联网
 - 静态：`bash -n` 语法 / 至少注册一个命令 / handler 签名 / CJK-跟-`$var` 模式
 - 联网：对 14 个第三方 API 的 5 秒可达性探测
 - 退出码 = 静态失败的插件数
+
+GitHub Actions：`.github/workflows/plugin-smoketest.yml` 在改动 `plugins/`、
+`lib/plugins.sh` 或 `scripts/plugin-smoketest.sh` 时自动跑静态检查（联网部分
+仅做参考，不阻塞 PR）。
 
 ### 智能记忆检索（BM25 + 字符二元）
 
