@@ -16,6 +16,7 @@ set -uo pipefail
 
 REPO_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 PLUGINS_DIR="${REPO_DIR}/plugins"
+PLUGINS_EXTRA_DIR="${REPO_DIR}/plugins-extra"
 FAIL=0
 PASS=0
 WARN=0
@@ -69,8 +70,15 @@ check_one() {
 
 echo "=== mini_bot plugin smoke test ==="
 echo "PLUGINS_DIR=$PLUGINS_DIR"
+echo "PLUGINS_EXTRA_DIR=$PLUGINS_EXTRA_DIR"
 echo
 for f in "$PLUGINS_DIR"/*.sh; do
+  [[ -f "$f" ]] || continue
+  check_one "$f"
+done
+echo
+echo "-- plugins-extra/ (opt-in) --"
+for f in "$PLUGINS_EXTRA_DIR"/*.sh; do
   [[ -f "$f" ]] || continue
   check_one "$f"
 done

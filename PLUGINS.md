@@ -1,6 +1,21 @@
 # mini_bot 插件大全
 
-截至本文档发布，仓库 `plugins/` 下共 **80 个插件**，注册了 **97+ 个命令**（含别名）。
+截至本文档发布，仓库共 **80 个插件**（66 个 `plugins/` core + 14 个 `plugins-extra/` opt-in），
+注册了 **97+ 个命令**（含别名）。
+
+> **Core / Extra 双层**
+> - `plugins/` 默认全部加载，覆盖 90% 日常用法（dev 工具、文本、网络、查询、提醒）。
+> - `plugins-extra/` 默认全部 **不加载**，按需 opt-in：
+>   ```
+>   /plugins extra list                # 列出 extras
+>   /plugins extra enable anime        # 写入 state/plugins.extra.enabled
+>   /plugins extra disable anime
+>   PLUGINS_EXTRA_ALL=1                # 环境变量全开
+>   ```
+>   当前 extras：`anime` `manga` `lyrics` `movie` `stock` `hn` `reddit` `video`
+>   `broadcast` `code_search` `docker` `npm` `pypi` `translate_image`
+>   （多媒体/特定平台 API/重依赖 placeholder）。
+
 所有插件都在聊天里直接用：把命令当一句普通消息发给 bot 即可。
 
 > 在 IM 里发 `/commands` 可让 bot 把当前注册的所有命令吐出来（按字母序）。
