@@ -3316,6 +3316,49 @@ Run in background:
 EOF
 }
 
+reap_stale_subscribers() {
+  # Kill leftover wxlink.py / lark-cli subscribers from previous runs, EXCEPT any
+  # that are descendants of the current bot.sh (there shouldn't be any yet, since
+  # this runs before we spawn). Uses pgrep to *find* PIDs, then kills each by PID
+  # (no name-based killers). Idempotent.
+  local self=$$
+  local pat='wxlink\.py .*subscribe|lark-cli event \+subscribe'
+  local pids; pids=$(pgrep -f "$pat" 2>/dev/null)
+  local pid killed=0
+  for pid in $pids; do
+    [[ "$pid" == "$self" ]] && continue
+    # Skip processes whose parent chain includes *this* bot.sh (paranoia; none yet).
+    local ppid; ppid=$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')
+    [[ "$ppid" == "$self" ]] && continue
+    if kill "$pid" 2>/dev/null; then
+      killed=$((killed+1))
+    fi
+  done
+  (( killed > 0 )) && log "reaped $killed stale subscriber process(es) before start"
+  return 0
+}
+
+reap_own_subscribers() {
+  # On exit, kill subscriber children we spawned so they don't become orphans.
+  # We match wxlink.py / lark-cli subscribers whose ancestry leads back to us.
+  local self=$$
+  local pat='wxlink\.py .*subscribe|lark-cli event \+subscribe'
+  local pids; pids=$(pgrep -f "$pat" 2>/dev/null)
+  local pid
+  for pid in $pids; do
+    # Walk up the parent chain up to 5 hops looking for $self.
+    local cur="$pid" hop=0 mine=0
+    while (( hop < 5 )); do
+      local pp; pp=$(ps -o ppid= -p "$cur" 2>/dev/null | tr -d ' ')
+      [[ -z "$pp" || "$pp" == "0" || "$pp" == "1" ]] && break
+      if [[ "$pp" == "$self" ]]; then mine=1; break; fi
+      cur="$pp"; hop=$((hop+1))
+    done
+    (( mine == 1 )) && kill "$pid" 2>/dev/null
+  done
+  return 0
+}
+
 main() {
   # One-shot migration: legacy /rag dir was $BOT_HOME/rag (cheatsheets).
   # That command is now /pin and the dir is $BOT_HOME/pin. Move if needed.
@@ -3331,6 +3374,17 @@ main() {
     --simulate)   shift; handle_event "$1"; exit $? ;;
     --cron-fire)  shift; cron_fire "$@"; exit $? ;;
   esac
+
+  # ── Reap stale subscriber processes from a previous (crashed / SIGTERM'd) run.
+  #    wxlink.py (python asyncio) and `lark-cli event +subscribe` (node) survive
+  #    when their parent bash subshell is killed, because SIGTERM hits the bash
+  #    process group but the pipe child is only reparented (it keeps its WeChat /
+  #    Feishu long-poll alive). Two subscribers on the same account then split the
+  #    server-side event stream → half the messages go to a dead pipe → users see
+  #    "slow"/missing replies. Kill any such leftovers BEFORE we spawn fresh ones.
+  reap_stale_subscribers
+  # Best-effort: also kill our own spawned subscribers when this bot.sh exits.
+  trap 'reap_own_subscribers' EXIT INT TERM
 
   # Determine which (platform, account) pairs to subscribe to.
   # accounts.list format (one per line):
