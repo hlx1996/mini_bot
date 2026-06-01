@@ -198,33 +198,38 @@ run_qoder_agent() {
   local sys_prompt
   sys_prompt=$(build_system_prompt "$key")
 
-  # ── Effort: default = medium (cheap, fast, ample for chat); high only when
-  #    the model/soul is explicitly heavyweight. Override per-call with BOT_EFFORT.
-  #    Pro/coder/long-soul tasks still benefit from deeper reasoning.
+  # ── Model tier: ultimate = thrifty (save tokens), everything else = quality.
+  local _thrifty; _thrifty=$(_is_thrifty_model "$model")
   local _soul_now; _soul_now=$(current_soul_for_key "$key" 2>/dev/null || echo default)
-  local effort="${BOT_EFFORT:-medium}"
-  case "$model" in pro|opus|sonnet|big) effort="${BOT_EFFORT:-high}" ;; esac
-  case "$_soul_now" in coder|pro) effort="${BOT_EFFORT:-high}" ;; esac
 
-  # ── Fast-path: short single-line prompts skip the MCP tool servers entirely
-  #    (saves spawn cost + tool-schema tokens). Threshold widened to 80 chars by
-  #    default. URLs are no longer disqualifying — url_fetch_inject already put
-  #    the page text into the prompt before we got here. Disable with
-  #    BOT_FASTPATH=0; tune length via BOT_FASTPATH_MAXLEN.
+  # ── Effort: thrifty → medium; non-thrifty → high (best quality).
+  local effort
+  if (( _thrifty )); then
+    effort="${BOT_EFFORT:-medium}"
+    case "$_soul_now" in coder|pro) effort="${BOT_EFFORT:-high}" ;; esac
+  else
+    effort="${BOT_EFFORT:-high}"
+  fi
+
+  # ── Fast-path MCP skip: only on thrifty models with short single-line prompts.
   local use_mcp=1
-  if [[ "${BOT_FASTPATH:-1}" == "1" && ${#attachments[@]} -eq 0 ]]; then
+  if (( _thrifty )) && [[ "${BOT_FASTPATH:-1}" == "1" && ${#attachments[@]} -eq 0 ]]; then
     local _plen=${#prompt}
     if (( _plen <= ${BOT_FASTPATH_MAXLEN:-80} )) && [[ "$prompt" != *$'\n'* ]]; then
       [[ "${BOT_FASTPATH_SKIP_MCP:-1}" == "1" ]] && use_mcp=0
     fi
   fi
 
-  # ── Output-token budget: most replies are short. Use 1500 by default and let
-  #    long inputs / attachments / explicit override expand. Saves both billed
-  #    output and the model's planning overhead.
-  local max_out="${BOT_MAX_OUTPUT_TOKENS:-1500}"
-  if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
-    max_out="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
+  # ── Output-token budget: thrifty → 1500 default (4000 for long inputs);
+  #    non-thrifty → always 4000 for best completeness.
+  local max_out
+  if (( _thrifty )); then
+    max_out="${BOT_MAX_OUTPUT_TOKENS:-1500}"
+    if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
+      max_out="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
+    fi
+  else
+    max_out="${BOT_MAX_OUTPUT_TOKENS:-4000}"
   fi
 
   local args=(
@@ -315,10 +320,17 @@ run_with_streaming() {
   started_marker="$SESS_DIR/$key.started"
   sys_prompt=$(build_system_prompt "$key")
 
-  local _stream_effort="${BOT_STREAM_EFFORT:-${BOT_EFFORT:-medium}}"
-  local _stream_max="${BOT_STREAM_MAX_OUTPUT_TOKENS:-${BOT_MAX_OUTPUT_TOKENS:-1500}}"
-  if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
-    _stream_max="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
+  local _stream_thrifty; _stream_thrifty=$(_is_thrifty_model "$model")
+  local _stream_effort _stream_max
+  if (( _stream_thrifty )); then
+    _stream_effort="${BOT_STREAM_EFFORT:-${BOT_EFFORT:-medium}}"
+    _stream_max="${BOT_STREAM_MAX_OUTPUT_TOKENS:-${BOT_MAX_OUTPUT_TOKENS:-1500}}"
+    if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
+      _stream_max="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
+    fi
+  else
+    _stream_effort="${BOT_STREAM_EFFORT:-${BOT_EFFORT:-high}}"
+    _stream_max="${BOT_STREAM_MAX_OUTPUT_TOKENS:-${BOT_MAX_OUTPUT_TOKENS:-4000}}"
   fi
   local args=(
     -p "$prompt"
@@ -2540,8 +2552,19 @@ handle_quota() {
   local sub="${rest%% *}" args=""
   [[ "$rest" != "$sub" ]] && args="${rest#* }"
   case "$sub" in
-    "")
-      reply_text "$to" "📊 今日配额：$(quota_get_used "$key") / $(quota_limit_for_key "$key")"
+    ""|show)
+      local m; m=$(model_for_key "$key")
+      local thrifty; thrifty=$(_is_thrifty_model "$m")
+      local mode="quality"; (( thrifty )) && mode="thrifty"
+      reply_text "$to" "📊 今日配额：$(quota_get_used "$key") / $(quota_limit_for_key "$key")
+模型：$m（$mode 模式）
+查看官方余额：https://qoder.com/dashboard"
+      ;;
+    tokens)
+      local scope="${args:-day}"
+      local report; report=$(cost_report "$scope")
+      reply_text "$to" "$report
+查看官方余额 → https://qoder.com/dashboard"
       ;;
     set)
       if ! is_admin "$G_FROM"; then reply_text "$to" "需要管理员权限。"; return; fi
@@ -2549,7 +2572,12 @@ handle_quota() {
       printf '%s' "$args" > "$SESS_DIR/$key.quota"
       reply_text "$to" "✅ 本会话每日配额已设为 $args"
       ;;
-    *) reply_text "$to" "用法：/quota | /quota set <n>" ;;
+    reset)
+      if ! is_admin "$G_FROM"; then reply_text "$to" "需要管理员权限。"; return; fi
+      quota_reset "$key"
+      reply_text "$to" "✅ 今日用量已清零"
+      ;;
+    *) reply_text "$to" "用法：/quota [show|tokens [day|week|all]|set <n>|reset]" ;;
   esac
 }
 
@@ -3279,7 +3307,8 @@ $hook_out"
   fi
 
   local answer="" _cache_hit=0 _cache_h=""
-  if (( _inj_used == 0 )) && _reply_cache_eligible "$G_TEXT" "$G_CHAT_TYPE" "${#attachments[@]}"; then
+  local _turn_thrifty; _turn_thrifty=$(_is_thrifty_model "$model")
+  if (( _turn_thrifty && _inj_used == 0 )) && _reply_cache_eligible "$G_TEXT" "$G_CHAT_TYPE" "${#attachments[@]}"; then
     _cache_h=$(_reply_cache_key "$key" "$G_TEXT" "$_soul_for_cache" "$model")
     if [[ -n "$_cache_h" ]] && answer=$(_reply_cache_get "$_cache_h"); then
       _cache_hit=1

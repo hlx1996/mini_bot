@@ -24,4 +24,4 @@ plugin_quota() {
 register_command "/export" plugin_export "导出本会话最近 N 条：/export [n]"
 register_command "/stats"  plugin_stats  "全局统计"
 register_command "/usage"  plugin_usage  "用量统计：/usage [day|week|all]"
-register_command "/quota"  plugin_quota  "查/设今日配额：/quota [show|set <n>|reset]"
+register_command "/quota"  plugin_quota  "配额/用量：/quota [show|tokens [day|week|all]|set <n>|reset]"
