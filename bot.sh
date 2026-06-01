@@ -84,7 +84,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh; do
+for _mod in lark.sh agents.sh tts.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh perf.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -126,7 +126,8 @@ get_session_uuid() {
 reset_session() {
   local key="$1"
   enc_remove "$SESS_DIR/$key.uuid"
-  rm -f "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock"
+  rm -f "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock" \
+        "$SESS_DIR/$key.chars" "$SESS_DIR/$key.automem_count"
 }
 
 wxlink() {
@@ -197,21 +198,33 @@ run_qoder_agent() {
   local sys_prompt
   sys_prompt=$(build_system_prompt "$key")
 
-  # ── Fast-path: trivial short chats don't need the 5 MCP tool servers spawned
-  #    on every call, nor high reasoning effort. Detect a short, single-line,
-  #    attachment-free, URL-free prompt and trim the heavy bits. This is the
-  #    main lever for "why is a one-word reply slow" — it avoids per-message MCP
-  #    server startup. Tunable via env; set BOT_FASTPATH=0 to disable entirely.
-  local effort="${BOT_EFFORT:-high}"
+  # ── Effort: default = medium (cheap, fast, ample for chat); high only when
+  #    the model/soul is explicitly heavyweight. Override per-call with BOT_EFFORT.
+  #    Pro/coder/long-soul tasks still benefit from deeper reasoning.
+  local _soul_now; _soul_now=$(current_soul_for_key "$key" 2>/dev/null || echo default)
+  local effort="${BOT_EFFORT:-medium}"
+  case "$model" in pro|opus|sonnet|big) effort="${BOT_EFFORT:-high}" ;; esac
+  case "$_soul_now" in coder|pro) effort="${BOT_EFFORT:-high}" ;; esac
+
+  # ── Fast-path: short single-line prompts skip the MCP tool servers entirely
+  #    (saves spawn cost + tool-schema tokens). Threshold widened to 80 chars by
+  #    default. URLs are no longer disqualifying — url_fetch_inject already put
+  #    the page text into the prompt before we got here. Disable with
+  #    BOT_FASTPATH=0; tune length via BOT_FASTPATH_MAXLEN.
   local use_mcp=1
   if [[ "${BOT_FASTPATH:-1}" == "1" && ${#attachments[@]} -eq 0 ]]; then
     local _plen=${#prompt}
-    if (( _plen <= ${BOT_FASTPATH_MAXLEN:-40} )) \
-        && [[ "$prompt" != *$'\n'* ]] \
-        && [[ "$prompt" != *http* ]]; then
-      effort="${BOT_FASTPATH_EFFORT:-medium}"
+    if (( _plen <= ${BOT_FASTPATH_MAXLEN:-80} )) && [[ "$prompt" != *$'\n'* ]]; then
       [[ "${BOT_FASTPATH_SKIP_MCP:-1}" == "1" ]] && use_mcp=0
     fi
+  fi
+
+  # ── Output-token budget: most replies are short. Use 1500 by default and let
+  #    long inputs / attachments / explicit override expand. Saves both billed
+  #    output and the model's planning overhead.
+  local max_out="${BOT_MAX_OUTPUT_TOKENS:-1500}"
+  if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
+    max_out="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
   fi
 
   local args=(
@@ -221,18 +234,22 @@ run_qoder_agent() {
     --reasoning-effort "$effort"
     --permission-mode bypass_permissions
     --append-system-prompt "$sys_prompt"
-    --max-output-tokens 4000
+    --max-output-tokens "$max_out"
   )
-  [[ "$use_mcp" == "1" && -f "$MCP_CONFIG" ]] && args+=( --mcp-config "$MCP_CONFIG" )
+  if (( use_mcp )) && [[ -f "$MCP_CONFIG" ]] && _prompt_wants_mcp "$prompt"; then
+    args+=( --mcp-config "$MCP_CONFIG" )
+  else
+    use_mcp=0
+  fi
   for a in ${attachments[@]+"${attachments[@]}"}; do
     args+=( --attachment "$a" )
   done
   if [[ -f "$started_marker" ]]; then
     args+=( --resume "$session_uuid" )
-    log "qoder RESUME uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
+    log "qoder RESUME uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp out=$max_out soul=$_soul_now cwd=$workspace attachments=${#attachments[@]}"
   else
     args+=( --session-id "$session_uuid" )
-    log "qoder NEW uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
+    log "qoder NEW uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp out=$max_out soul=$_soul_now cwd=$workspace attachments=${#attachments[@]}"
   fi
 
   "$QODER_BIN" "${args[@]}" 2>>"$LOG_DIR/qoder.err"
@@ -298,17 +315,25 @@ run_with_streaming() {
   started_marker="$SESS_DIR/$key.started"
   sys_prompt=$(build_system_prompt "$key")
 
+  local _stream_effort="${BOT_STREAM_EFFORT:-${BOT_EFFORT:-medium}}"
+  local _stream_max="${BOT_STREAM_MAX_OUTPUT_TOKENS:-${BOT_MAX_OUTPUT_TOKENS:-1500}}"
+  if (( ${#attachments[@]} > 0 )) || (( ${#prompt} > 1500 )); then
+    _stream_max="${BOT_MAX_OUTPUT_TOKENS_LONG:-4000}"
+  fi
   local args=(
     -p "$prompt"
     -m "$model"
     --cwd "$workspace"
-    --reasoning-effort high
+    --reasoning-effort "$_stream_effort"
     --permission-mode bypass_permissions
     --append-system-prompt "$sys_prompt"
-    --max-output-tokens 4000
+    --max-output-tokens "$_stream_max"
     --output-format stream-json
   )
-  [[ -f "$MCP_CONFIG" ]] && args+=( --mcp-config "$MCP_CONFIG" )
+  # Lazy MCP: only wire the tool servers in when the prompt looks like it needs them.
+  if [[ -f "$MCP_CONFIG" ]] && _prompt_wants_mcp "$prompt"; then
+    args+=( --mcp-config "$MCP_CONFIG" )
+  fi
   for a in ${attachments[@]+"${attachments[@]}"}; do
     args+=( --attachment "$a" )
   done
@@ -639,6 +664,9 @@ list_mcp_servers() {
   ' "$MCP_CONFIG" 2>/dev/null || echo "(mcp.json is not valid JSON)"
 }
 
+# Performance helpers (_mcp_server_names, _prompt_wants_mcp, _inject_*,
+# _reply_cache_*, _session_*) live in lib/perf.sh and are sourced at startup.
+
 # ---------- mute / whitelist / admins ----------
 
 is_listed() { grep -qxF "$2" "$1" 2>/dev/null; }
@@ -692,35 +720,55 @@ WELCOME_MSG_DEFAULT='👋 你好，我是 mini_bot（qoder lite 驱动）。
 #
 # Layered: soul + memory + (lang hint if any) + tool list note
 build_system_prompt() {
-  local key="$1" soul mem gmem extras
-  # Skill auto-route override takes precedence over stuck soul (this turn only).
+  local key="$1" soul mem gmem
+  local soul_name="" override_path=""
   if [[ -n "${G_SKILL_OVERRIDE:-}" ]]; then
-    local _f
-    if _f=$(_skill_path "$G_SKILL_OVERRIDE"); then
-      soul=$(_skill_body "$_f")
+    if override_path=$(_skill_path "$G_SKILL_OVERRIDE" 2>/dev/null); then
+      soul_name="__skill__:$G_SKILL_OVERRIDE"
     else
-      soul=$(soul_text "$(current_soul_for_key "$key")")
+      soul_name=$(current_soul_for_key "$key")
     fi
   else
-    soul=$(soul_text "$(current_soul_for_key "$key")")
+    soul_name=$(current_soul_for_key "$key")
   fi
-  mem=$(memory_show "$key")
-  [[ "$mem" == "(本会话暂无记忆)" ]] && mem=""
-  gmem=$(memory_show_global)
-  [[ "$gmem" == "(全局记忆暂为空)" ]] && gmem=""
-  extras=""
-  if [[ -f "$MCP_CONFIG" ]]; then
-    extras+=$'\n\n[Available MCP tool servers from mcp.json]:\n'
-    extras+=$(list_mcp_servers)
+
+  # Cache key: composite of all input mtimes. Skips re-reading souls/memory/MCP
+  # files unless one of them actually changed since the last build.
+  local cache_dir="$BOT_HOME/.cache/sys_prompt"
+  mkdir -p "$cache_dir" 2>/dev/null
+  local sf="$SOULS_DIR/${soul_name#__skill__:}.txt"
+  [[ -n "$override_path" ]] && sf="$override_path"
+  local mf gmf mcpf="$MCP_CONFIG"
+  mf=$(memory_path "$key" 2>/dev/null)
+  gmf=$(memory_path_global 2>/dev/null)
+  _mt() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || echo 0; }
+  local stamp="${soul_name}|$(_mt "$sf")|$(_mt "$mf")|$(_mt "$gmf")|$(_mt "$mcpf")"
+  local cache_file="$cache_dir/$key"
+  local stamp_file="$cache_dir/$key.stamp"
+  if [[ -f "$cache_file" && -f "$stamp_file" ]] && [[ "$(cat "$stamp_file" 2>/dev/null)" == "$stamp" ]]; then
+    cat "$cache_file"
+    return
   fi
-  printf '%s' "$soul"
-  if [[ -n "$gmem" ]]; then
-    printf '\n\n[Global long-term memory — applies to every chat]:\n%s' "$gmem"
+
+  if [[ -n "$override_path" ]]; then
+    soul=$(_skill_body "$override_path")
+  else
+    soul=$(soul_text "$soul_name")
   fi
-  if [[ -n "$mem" ]]; then
-    printf '\n\n[Long-term memory for this chat — treat as ground truth]:\n%s' "$mem"
-  fi
-  printf '%s' "$extras"
+  mem=$(memory_show "$key");        [[ "$mem"  == "(本会话暂无记忆)" ]] && mem=""
+  gmem=$(memory_show_global);       [[ "$gmem" == "(全局记忆暂为空)"  ]] && gmem=""
+
+  {
+    printf '%s' "$soul"
+    if [[ -n "$gmem" ]]; then
+      printf '\n\n[Global long-term memory — applies to every chat]:\n%s' "$gmem"
+    fi
+    if [[ -n "$mem" ]]; then
+      printf '\n\n[Long-term memory for this chat — treat as ground truth]:\n%s' "$mem"
+    fi
+  } > "$cache_file"
+  printf '%s' "$stamp" > "$stamp_file"
+  cat "$cache_file"
 }
 
 ensure_sample_souls
@@ -975,6 +1023,23 @@ intent_shortcut() {
   # 重置
   if [[ "$t" =~ ^(reset|重置|清空|重来|重新开始|新对话|new[[:space:]]+chat|清除上下文)$ ]]; then
     echo "/reset"; return 0
+  fi
+  # 翻译（"翻译成英文/中文 …" / "translate … to …"）
+  if [[ "$t" =~ ^(翻译|translate)[[:space:]]+ ]] || [[ "$t" =~ (翻译成|translate[[:space:]]+to) ]]; then
+    echo "/translate $t"; return 0
+  fi
+  # TTS 开关
+  if [[ "$t" =~ ^(语音回复|开启语音|打开语音|tts[[:space:]]+on)$ ]]; then echo "/tts on";  return 0; fi
+  if [[ "$t" =~ ^(关闭语音|停止语音|tts[[:space:]]+off)$ ]];               then echo "/tts off"; return 0; fi
+  # 新闻 headline 列表（明确说"今日要闻/头条"才走 /news；否则交给 /search）
+  if [[ "$t" =~ ^(今日要闻|今日头条|今天头条|头条新闻)$ ]]; then echo "/news"; return 0; fi
+  # 天气：只接受短句"天气" / "<地名> 天气" / "weather …"
+  if [[ "$t" =~ ^(天气|weather)$ ]] || [[ "$t" =~ ^(.{1,12}[市县区州省]?)[[:space:]]?(的)?天气$ ]]; then
+    echo "/weather $t"; return 0
+  fi
+  # 简单的 cron 触发词（"每天 7 点提醒我…"）— 让 /cron nl 解析
+  if [[ "$t" =~ ^(每(天|周|月|日|隔)|every[[:space:]]+(day|week|month)).{0,40}(提醒|reminder|remind) ]]; then
+    echo "/cron nl $t"; return 0
   fi
   # Negative fast-path: if the message contains NO routing-hint keyword at all,
   # it's almost certainly ordinary conversation. Skip the expensive LLM intent
@@ -3131,27 +3196,39 @@ handle_event() {
   fi
   [[ -z "$prompt" ]] && return
 
+  # Capture stable inputs for the response cache (B4) before any context injection.
+  local _soul_for_cache; _soul_for_cache=$(current_soul_for_key "$key" 2>/dev/null || echo default)
+
+  # Track total injected non-conversation context to enforce BOT_INJECT_MAX.
+  local _inj_used=0
+  local _inj_left; _inj_left=$(_inject_remaining "$_inj_used")
+
   # /pin: prepend top-K pinned snippets if enabled and matches found
   local pin_ctx
-  if pin_ctx=$(pin_retrieve "$key" "$prompt"); then
+  if (( _inj_left > 200 )) && pin_ctx=$(pin_retrieve "$key" "$prompt"); then
     if [[ -n "$pin_ctx" ]]; then
+      pin_ctx=$(_inject_clip "$pin_ctx" "$_inj_left")
       prompt="$pin_ctx
 
 [User]: $prompt"
-      log "pin injected (+${#pin_ctx} chars)"
+      _inj_used=$((_inj_used + ${#pin_ctx}))
+      log "pin injected (+${#pin_ctx} chars; used=$_inj_used)"
     fi
   fi
 
   # /rag: pull top-K chunks from Feishu doc knowledge base (chunks indexed,
   # original doc content NOT stored locally — refetched on the fly).
-  if command -v rag_retrieve >/dev/null 2>&1; then
+  _inj_left=$(_inject_remaining "$_inj_used")
+  if (( _inj_left > 200 )) && command -v rag_retrieve >/dev/null 2>&1; then
     local rag_ctx
     if rag_ctx=$(rag_retrieve "$key" "$prompt" 2>/dev/null); then
       if [[ -n "$rag_ctx" ]]; then
+        rag_ctx=$(_inject_clip "$rag_ctx" "$_inj_left")
         prompt="$rag_ctx
 
 $prompt"
-        log "rag injected (+${#rag_ctx} chars)"
+        _inj_used=$((_inj_used + ${#rag_ctx}))
+        log "rag injected (+${#rag_ctx} chars; used=$_inj_used)"
       fi
     fi
   fi
@@ -3159,13 +3236,16 @@ $prompt"
   # URL-question shortcut: if the message contains http(s):// URLs, fetch each
   # (HTML stripped to text, capped) and prepend as [Web page] context.
   # Disabled per-key via /url off.
+  _inj_left=$(_inject_remaining "$_inj_used")
   local url_ctx
-  if url_is_on "$key" && url_ctx=$(url_fetch_inject "$prompt"); then
+  if (( _inj_left > 200 )) && url_is_on "$key" && url_ctx=$(url_fetch_inject "$prompt"); then
     if [[ -n "$url_ctx" ]]; then
+      url_ctx=$(_inject_clip "$url_ctx" "$_inj_left")
       prompt="$url_ctx
 
 [User]: $prompt"
-      log "URL-FETCH injected (+${#url_ctx} chars)"
+      _inj_used=$((_inj_used + ${#url_ctx}))
+      log "URL-FETCH injected (+${#url_ctx} chars; used=$_inj_used)"
     fi
   fi
 
@@ -3187,20 +3267,36 @@ $prompt"
   hook_out=$(HOOK_KEY="$key" HOOK_MODEL="$model" \
               printf '%s' "$prompt" | run_hook pre_turn || true)
   if [[ -n "$hook_out" ]]; then
+    _inj_left=$(_inject_remaining "$_inj_used")
+    (( _inj_left < 1 )) && _inj_left=200
+    hook_out=$(_inject_clip "$hook_out" "$_inj_left")
     prompt="$prompt
 
 [Hook context]:
 $hook_out"
-    log "HOOK pre_turn enriched prompt (+${#hook_out} chars)"
+    _inj_used=$((_inj_used + ${#hook_out}))
+    log "HOOK pre_turn enriched prompt (+${#hook_out} chars; used=$_inj_used)"
   fi
 
-  local answer
-  if stream_is_on "$key"; then
-    answer=$(run_with_streaming "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
-              ${attachments[@]+"${attachments[@]}"})
-  else
-    answer=$(run_with_heartbeat "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
-              ${attachments[@]+"${attachments[@]}"})
+  local answer="" _cache_hit=0 _cache_h=""
+  if (( _inj_used == 0 )) && _reply_cache_eligible "$G_TEXT" "$G_CHAT_TYPE" "${#attachments[@]}"; then
+    _cache_h=$(_reply_cache_key "$key" "$G_TEXT" "$_soul_for_cache" "$model")
+    if [[ -n "$_cache_h" ]] && answer=$(_reply_cache_get "$_cache_h"); then
+      _cache_hit=1
+      log "REPLY-CACHE hit key=$key h=${_cache_h:0:8} (+${#answer} chars saved)"
+    fi
+  fi
+  if (( _cache_hit == 0 )); then
+    if stream_is_on "$key"; then
+      answer=$(run_with_streaming "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
+                ${attachments[@]+"${attachments[@]}"})
+    else
+      answer=$(run_with_heartbeat "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
+                ${attachments[@]+"${attachments[@]}"})
+    fi
+    if [[ -n "$_cache_h" && -n "$answer" ]]; then
+      _reply_cache_put "$_cache_h" "$answer"
+    fi
   fi
 
   log "qoder returned ${#answer} chars"
@@ -3214,6 +3310,17 @@ $hook_out"
 
   # Coarse cost tracking (chars/3.5 ≈ tokens). See /cost command.
   command -v cost_log >/dev/null 2>&1 && cost_log "$key" "$model" "${#prompt}" "${#answer}" || true
+
+  # Auto-compress: bump per-session char counter (skip on cache hit — no new
+  # history was sent), summarize + reset when threshold reached.
+  if (( _cache_hit == 0 )) && [[ "${BOT_AUTO_COMPRESS:-1}" == "1" ]]; then
+    local _sess_total
+    _sess_total=$(_session_chars_bump "$key" "$((${#prompt} + ${#answer}))")
+    if (( _sess_total >= ${BOT_COMPRESS_AT:-120000} )); then
+      log "AUTO-COMPRESS key=$key trigger (chars=$_sess_total ≥ ${BOT_COMPRESS_AT:-120000})"
+      ( _session_compress "$key" "$model" "$workspace" ) &
+    fi
+  fi
 
   # post_turn hook: stdin = reply (for logging/forwarding); stdout ignored
   HOOK_KEY="$key" HOOK_MODEL="$model" \

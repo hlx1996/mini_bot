@@ -83,11 +83,13 @@ ${regs}"
       fi
       ;;
     reload)
-      # 当前进程下重新 source 所有插件。注意：register_command 是 append-only，
-      # 重复 source 会出现重复命令；但 _plugin_lookup 取第一个匹配，所以
-      # 行为还是正确的（只是 /help 会显得长）。建议改 disable/enable 后重启。
-      reply_text "$to" "🔄 reload 仅作 best-effort：建议 disable/enable 后直接重启 bot。
+      if declare -F plugins_reload >/dev/null 2>&1; then
+        plugins_reload
+        reply_text "$to" "🔄 已重载（懒加载 manifest 已重建）。当前命令数: ${#_PLUGIN_CMDS[@]}"
+      else
+        reply_text "$to" "🔄 reload 仅作 best-effort：建议 disable/enable 后直接重启 bot。
 当前进程命令数: ${#_PLUGIN_CMDS[@]}"
+      fi
       ;;
     extra)
       local sub2="${arg%% *}" name=""

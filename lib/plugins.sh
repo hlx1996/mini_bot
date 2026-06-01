@@ -11,6 +11,13 @@
 #
 # Plugins inherit the bot's full shell — all helpers (reply_text, run_qoder_agent,
 # memory_*, contact_*, bridge_*, ...) are in scope. Keep them small.
+#
+# LAZY LOADING (D): instead of sourcing every plugin file at startup, we pre-scan
+# the files for their `register_command "..."` lines and cache that to a manifest
+# (state/.cache/plugins.manifest, keyed by directory mtimes). At runtime each
+# plugin file is sourced only on its first dispatch. This keeps startup fast and
+# lets us keep adding plugins without paying their parse cost. Disable with
+# BOT_PLUGIN_LAZY=0 (or via existing PLUGINS_DISABLE_LAZY=1).
 
 PLUGINS_DIR="${PLUGINS_DIR:-$SCRIPT_DIR/plugins}"
 PLUGINS_EXTRA_DIR="${PLUGINS_EXTRA_DIR:-$SCRIPT_DIR/plugins-extra}"
@@ -19,6 +26,7 @@ PLUGINS_EXTRA_DIR="${PLUGINS_EXTRA_DIR:-$SCRIPT_DIR/plugins-extra}"
 _PLUGIN_CMDS=()
 _PLUGIN_FNS=()
 _PLUGIN_HELPS=()
+_PLUGIN_FILES=()  # source path; "" means "already loaded" / runtime-registered
 
 register_command() {
   local cmd="$1" fn="$2" help="${3:-}"
@@ -28,6 +36,15 @@ register_command() {
   _PLUGIN_CMDS+=( "$cmd" )
   _PLUGIN_FNS+=( "$fn" )
   _PLUGIN_HELPS+=( "$help" )
+  _PLUGIN_FILES+=( "" )   # registered at runtime — already in scope
+}
+
+# _register_lazy <cmd> <fn> <help> <file>  — internal, used by manifest replay.
+_register_lazy() {
+  _PLUGIN_CMDS+=( "$1" )
+  _PLUGIN_FNS+=( "$2" )
+  _PLUGIN_HELPS+=( "$3" )
+  _PLUGIN_FILES+=( "$4" )
 }
 
 _plugin_lookup() {
@@ -42,28 +59,112 @@ _plugin_lookup() {
   return 1
 }
 
-plugins_load() {
+# _scan_one_plugin <file>  — emits TAB-separated rows: cmd \t fn \t help \t file
+# Reads `register_command "<cmd>" <fn> "<help>"` lines without sourcing the file.
+_scan_one_plugin() {
+  local f="$1"
+  awk -v F="$f" '
+    /^[[:space:]]*register_command[[:space:]]+/ {
+      # Strip leading "register_command " and trailing comment.
+      sub(/^[[:space:]]*register_command[[:space:]]+/, "")
+      sub(/#.*$/, "")
+      # Trim trailing whitespace.
+      sub(/[[:space:]]+$/, "")
+
+      cmd=""; fn=""; help=""; rest=$0
+      # cmd: quoted or bareword
+      if (match(rest, /^"[^"]*"/)) {
+        cmd=substr(rest, RSTART+1, RLENGTH-2); rest=substr(rest, RSTART+RLENGTH)
+      } else if (match(rest, /^[^[:space:]]+/)) {
+        cmd=substr(rest, RSTART, RLENGTH); rest=substr(rest, RSTART+RLENGTH)
+      } else next
+      sub(/^[[:space:]]+/, "", rest)
+      # fn: bareword
+      if (match(rest, /^[A-Za-z_][A-Za-z_0-9]*/)) {
+        fn=substr(rest, RSTART, RLENGTH); rest=substr(rest, RSTART+RLENGTH)
+      } else next
+      sub(/^[[:space:]]+/, "", rest)
+      # help (optional): quoted or rest of line
+      if (match(rest, /^"[^"]*"/)) {
+        help=substr(rest, RSTART+1, RLENGTH-2)
+      } else if (match(rest, /^'\''[^'\'']*'\''/)) {
+        help=substr(rest, RSTART+1, RLENGTH-2)
+      } else {
+        help=rest
+      }
+      gsub(/\t/, " ", help)
+      printf "%s\t%s\t%s\t%s\n", cmd, fn, help, F
+    }
+  ' "$f" 2>/dev/null
+}
+
+# _plugins_dir_stamp <dir>  — newline-joined "name<TAB>mtime" used as cache key.
+_plugins_dir_stamp() {
+  local dir="$1"
+  [[ -d "$dir" ]] || { echo ""; return; }
+  local f
+  for f in "$dir"/*.sh; do
+    [[ -f "$f" ]] || continue
+    local mt; mt=$(stat -f %m "$f" 2>/dev/null || stat -c %Y "$f" 2>/dev/null || echo 0)
+    printf '%s\t%s\n' "$(basename "$f")" "$mt"
+  done
+}
+
+_plugins_build_manifest() {
+  # Emits TAB-separated rows for every plugin file we should expose (respecting
+  # disabled / extra-enabled lists).  Rows: cmd \t fn \t help \t file
   local disabled_file="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.disabled"
   local enabled_extra="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.extra.enabled"
   local f base
 
-  # 1) core 目录：默认全部加载
   if [[ -d "$PLUGINS_DIR" ]]; then
     for f in "$PLUGINS_DIR"/*.sh; do
       [[ -f "$f" ]] || continue
       base=$(basename "$f" .sh)
       if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
-        command -v log >/dev/null 2>&1 && log "plugin skipped (disabled): $base" || true
+        continue
+      fi
+      _scan_one_plugin "$f"
+    done
+  fi
+
+  if [[ -d "$PLUGINS_EXTRA_DIR" ]]; then
+    local all="${PLUGINS_EXTRA_ALL:-0}"
+    for f in "$PLUGINS_EXTRA_DIR"/*.sh; do
+      [[ -f "$f" ]] || continue
+      base=$(basename "$f" .sh)
+      if [[ "$all" != "1" ]]; then
+        [[ -f "$enabled_extra" ]] || continue
+        LC_ALL=C grep -qx "$base" "$enabled_extra" 2>/dev/null || continue
+      fi
+      if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
+        continue
+      fi
+      _scan_one_plugin "$f"
+    done
+  fi
+}
+
+# _plugins_eager_load — original behaviour: source every plugin file at startup.
+_plugins_eager_load() {
+  local disabled_file="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.disabled"
+  local enabled_extra="${BOT_HOME:-${STATE_DIR:-./state}}/plugins.extra.enabled"
+  local f base
+
+  if [[ -d "$PLUGINS_DIR" ]]; then
+    for f in "$PLUGINS_DIR"/*.sh; do
+      [[ -f "$f" ]] || continue
+      base=$(basename "$f" .sh)
+      if [[ -f "$disabled_file" ]] && LC_ALL=C grep -qx "$base" "$disabled_file" 2>/dev/null; then
+        declare -F log >/dev/null 2>&1 && log "plugin skipped (disabled): $base" || true
         continue
       fi
       if ! source "$f"; then
-        command -v log >/dev/null 2>&1 && log "plugin load FAIL: $f" || echo "plugin load FAIL: $f" >&2
+        declare -F log >/dev/null 2>&1 && log "plugin load FAIL: $f" || echo "plugin load FAIL: $f" >&2
       fi
     done
   fi
 
-  # 2) extra 目录：opt-in。整体开关 PLUGINS_EXTRA_ALL=1 全开；
-  #    否则只加载 plugins.extra.enabled 里列出的 stem（一行一个）。
   if [[ -d "$PLUGINS_EXTRA_DIR" ]]; then
     local all="${PLUGINS_EXTRA_ALL:-0}"
     for f in "$PLUGINS_EXTRA_DIR"/*.sh; do
@@ -77,9 +178,64 @@ plugins_load() {
         continue
       fi
       if ! source "$f"; then
-        command -v log >/dev/null 2>&1 && log "plugin-extra load FAIL: $f" || echo "plugin-extra load FAIL: $f" >&2
+        declare -F log >/dev/null 2>&1 && log "plugin-extra load FAIL: $f" || echo "plugin-extra load FAIL: $f" >&2
       fi
     done
+  fi
+}
+
+plugins_load() {
+  if [[ "${BOT_PLUGIN_LAZY:-1}" != "1" || "${PLUGINS_DISABLE_LAZY:-0}" == "1" ]]; then
+    _plugins_eager_load
+    return
+  fi
+
+  local cache_dir="${BOT_HOME:-${STATE_DIR:-./state}}/.cache"
+  mkdir -p "$cache_dir" 2>/dev/null
+  local manifest="$cache_dir/plugins.manifest"
+  local stamp_file="$cache_dir/plugins.stamp"
+
+  local stamp_now
+  stamp_now=$(printf '%s\n%s\n' \
+    "$(_plugins_dir_stamp "$PLUGINS_DIR")" \
+    "$(_plugins_dir_stamp "$PLUGINS_EXTRA_DIR")")
+
+  local stamp_old=""
+  [[ -f "$stamp_file" ]] && stamp_old=$(cat "$stamp_file" 2>/dev/null)
+  if [[ ! -f "$manifest" || "$stamp_now" != "$stamp_old" ]]; then
+    _plugins_build_manifest > "$manifest.tmp" 2>/dev/null
+    mv "$manifest.tmp" "$manifest" 2>/dev/null
+    printf '%s' "$stamp_now" > "$stamp_file" 2>/dev/null
+    declare -F log >/dev/null 2>&1 && log "plugins: manifest rebuilt ($(wc -l < "$manifest" | tr -d ' ') rows)" || true
+  fi
+
+  local cmd fn help file
+  while IFS=$'\t' read -r cmd fn help file; do
+    [[ -z "$cmd" || -z "$fn" || -z "$file" ]] && continue
+    _register_lazy "$cmd" "$fn" "$help" "$file"
+  done < "$manifest"
+}
+
+# Reload all plugins (used by /plugins reload). Clears manifest + arrays.
+plugins_reload() {
+  _PLUGIN_CMDS=(); _PLUGIN_FNS=(); _PLUGIN_HELPS=(); _PLUGIN_FILES=()
+  rm -f "${BOT_HOME:-${STATE_DIR:-./state}}/.cache/plugins.manifest" \
+        "${BOT_HOME:-${STATE_DIR:-./state}}/.cache/plugins.stamp" 2>/dev/null
+  plugins_load
+}
+
+# _ensure_plugin_loaded <idx>  — sources the plugin file if not yet loaded.
+_ensure_plugin_loaded() {
+  local idx="$1"
+  local file="${_PLUGIN_FILES[$idx]:-}"
+  [[ -z "$file" ]] && return 0   # already in scope (eager-loaded or runtime-registered)
+  [[ -f "$file" ]] || return 0
+  # Marker so we don't re-source: set BEFORE sourcing in case the file calls
+  # back into plugins_load (paranoid).
+  _PLUGIN_FILES[$idx]=""
+  if ! source "$file"; then
+    declare -F log >/dev/null 2>&1 && log "plugin lazy-source FAIL: $file" || echo "plugin lazy-source FAIL: $file" >&2
+    return 1
   fi
 }
 
@@ -104,6 +260,7 @@ plugin_dispatch() {
   fi
 
   local idx; idx=$(_plugin_lookup "$cmd") || return 1
+  _ensure_plugin_loaded "$idx"
   # 记一笔调用：BOT_HOME/metrics/commands.tsv 行: epoch\tcmd
   local mdir="${BOT_HOME:-./state}/metrics"
   mkdir -p "$mdir" 2>/dev/null
@@ -125,4 +282,3 @@ plugin_help() {
   done | sort -u)
   printf '%s\n' "$pairs" | awk -F'\t' '{printf "  %-28s %s\n", $1, $2}'
 }
-
