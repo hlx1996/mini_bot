@@ -5,6 +5,8 @@
 > English: [README.en.md](./README.en.md)
 >
 > **📖 66 core + 14 extra（opt-in）共 80 插件完整索引 + 示例 → [PLUGINS.md](./PLUGINS.md)**
+>
+> **🧪 全量测试用例 + 回归脚本 → [TESTING.md](./TESTING.md)**
 
 ---
 
