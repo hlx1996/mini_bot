@@ -64,9 +64,22 @@ automem_is_on() { [[ -f "$SESS_DIR/$1.automem" ]]; }
 
 # automem_extract <key> <user_msg> <assistant_reply>
 # Asks the model for 0..3 short factual statements worth remembering, appends to memory.
+# Throttled: only fires every Nth turn (default 5) AND when the combined exchange has
+# enough substance to plausibly contain a durable fact.
 automem_extract() {
   local key="$1" user_msg="$2" reply="$3"
   automem_is_on "$key" || return 0
+  # Length gate — a short "ok"/"thanks" exchange almost never yields a durable fact.
+  local combined_len=$((${#user_msg} + ${#reply}))
+  (( combined_len < ${BOT_AUTOMEM_MINLEN:-80} )) && return 0
+  # Counter gate — only every Nth turn pays for the extraction LLM call.
+  local every="${BOT_AUTOMEM_EVERY:-5}"
+  local counter_file="$SESS_DIR/$key.automem_count"
+  local cur=0
+  [[ -s "$counter_file" ]] && cur=$(cat "$counter_file" 2>/dev/null || echo 0)
+  cur=$((cur + 1))
+  printf '%s' "$cur" > "$counter_file"
+  (( cur % every != 0 )) && return 0
   local prompt; prompt=$(cat <<EOF
 You are a memory extractor. Given the recent exchange below, output 0..3 short
 DURABLE facts about the user (preferences, identity, ongoing projects, names).
