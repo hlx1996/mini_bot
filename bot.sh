@@ -197,25 +197,42 @@ run_qoder_agent() {
   local sys_prompt
   sys_prompt=$(build_system_prompt "$key")
 
+  # ── Fast-path: trivial short chats don't need the 5 MCP tool servers spawned
+  #    on every call, nor high reasoning effort. Detect a short, single-line,
+  #    attachment-free, URL-free prompt and trim the heavy bits. This is the
+  #    main lever for "why is a one-word reply slow" — it avoids per-message MCP
+  #    server startup. Tunable via env; set BOT_FASTPATH=0 to disable entirely.
+  local effort="${BOT_EFFORT:-high}"
+  local use_mcp=1
+  if [[ "${BOT_FASTPATH:-1}" == "1" && ${#attachments[@]} -eq 0 ]]; then
+    local _plen=${#prompt}
+    if (( _plen <= ${BOT_FASTPATH_MAXLEN:-40} )) \
+        && [[ "$prompt" != *$'\n'* ]] \
+        && [[ "$prompt" != *http* ]]; then
+      effort="${BOT_FASTPATH_EFFORT:-medium}"
+      [[ "${BOT_FASTPATH_SKIP_MCP:-1}" == "1" ]] && use_mcp=0
+    fi
+  fi
+
   local args=(
     -p "$prompt"
     -m "$model"
     --cwd "$workspace"
-    --reasoning-effort high
+    --reasoning-effort "$effort"
     --permission-mode bypass_permissions
     --append-system-prompt "$sys_prompt"
     --max-output-tokens 4000
   )
-  [[ -f "$MCP_CONFIG" ]] && args+=( --mcp-config "$MCP_CONFIG" )
+  [[ "$use_mcp" == "1" && -f "$MCP_CONFIG" ]] && args+=( --mcp-config "$MCP_CONFIG" )
   for a in ${attachments[@]+"${attachments[@]}"}; do
     args+=( --attachment "$a" )
   done
   if [[ -f "$started_marker" ]]; then
     args+=( --resume "$session_uuid" )
-    log "qoder RESUME uuid=$session_uuid model=$model soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
+    log "qoder RESUME uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
   else
     args+=( --session-id "$session_uuid" )
-    log "qoder NEW uuid=$session_uuid model=$model soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
+    log "qoder NEW uuid=$session_uuid model=$model effort=$effort mcp=$use_mcp soul=$(current_soul_for_key "$key") cwd=$workspace attachments=${#attachments[@]}"
   fi
 
   "$QODER_BIN" "${args[@]}" 2>>"$LOG_DIR/qoder.err"
@@ -238,14 +255,21 @@ run_with_heartbeat() {
   local qpid=$!
   echo "$qpid" > "$lock_file"
 
-  local elapsed=0
+  local elapsed=0 next_beat=25
   while kill -0 "$qpid" 2>/dev/null; do
-    sleep 5
-    elapsed=$((elapsed+5))
-    if (( elapsed == 25 )); then
-      reply_text "$to" "🤔 还在处理中，请稍等…" || true
-    elif (( elapsed > 0 && elapsed % 60 == 0 )); then
-      reply_text "$to" "⏳ 已经处理 ${elapsed}s，仍在继续…" || true
+    sleep 1
+    elapsed=$((elapsed+1))
+    # Heartbeat at 25s, then every 60s thereafter — keeps the user informed on
+    # genuinely long tasks without adding latency to fast replies (we poll every
+    # 1s so a 6s reply is delivered at ~6s, not rounded up to the next 5s tick).
+    if (( elapsed == next_beat )); then
+      if (( next_beat == 25 )); then
+        reply_text "$to" "🤔 还在处理中，请稍等…" || true
+        next_beat=60
+      else
+        reply_text "$to" "⏳ 已经处理 ${elapsed}s，仍在继续…" || true
+        next_beat=$((next_beat+60))
+      fi
     fi
     if (( elapsed > 600 )); then
       log "qoder timed out, killing pid $qpid"
@@ -951,6 +975,17 @@ intent_shortcut() {
   # 重置
   if [[ "$t" =~ ^(reset|重置|清空|重来|重新开始|新对话|new[[:space:]]+chat|清除上下文)$ ]]; then
     echo "/reset"; return 0
+  fi
+  # Negative fast-path: if the message contains NO routing-hint keyword at all,
+  # it's almost certainly ordinary conversation. Skip the expensive LLM intent
+  # classifier (a full extra qoder round-trip, ~5s) and treat it as chat. Only
+  # messages that DO carry a hint but didn't match a specific shortcut above fall
+  # through (return 1) to intent_route_llm for precise disambiguation.
+  # Disable this optimization with BOT_AUTOROUTE_STRICT=1 (always use the LLM).
+  if [[ "${BOT_AUTOROUTE_STRICT:-0}" != "1" ]]; then
+    if [[ ! "$lt" =~ (搜|查|新闻|最新|天气|股票|价格|汇率|画|图|照片|提醒|定时|闹钟|每天|每周|每月|每隔|重置|清空|重来|语音|朗读|念|翻译|下载|search|news|weather|draw|image|picture|photo|remind|schedule|cron|reset|tts|voice|translate|download|stock|price) ]]; then
+      echo "/chat"; return 0
+    fi
   fi
   return 1
 }
@@ -3316,6 +3351,25 @@ Run in background:
 EOF
 }
 
+prewarm_qoder() {
+  # The first real message after a (re)start is slow because qodercli must cold-
+  # start: spawn 5 MCP servers via npx/uvx (which may resolve/download packages)
+  # and open the model connection. Hide that one-time cost by firing a throwaway
+  # warm-up call in the background at startup. Disable with BOT_PREWARM=0.
+  [[ "${BOT_PREWARM:-1}" == "1" ]] || return 0
+  command -v "$QODER_BIN" >/dev/null 2>&1 || return 0
+  (
+    local ws="$WORK_ROOT/__prewarm"
+    mkdir -p "$ws"
+    local pa=( -p "hi" -m "$BOT_MODEL_DEFAULT" --cwd "$ws"
+              --permission-mode bypass_permissions --max-output-tokens 8
+              --reasoning-effort low )
+    [[ -f "$MCP_CONFIG" ]] && pa+=( --mcp-config "$MCP_CONFIG" )
+    "$QODER_BIN" "${pa[@]}" >/dev/null 2>>"$LOG_DIR/prewarm.err"
+    log "qoder prewarm done"
+  ) &
+}
+
 reap_stale_subscribers() {
   # Kill leftover wxlink.py / lark-cli subscribers from previous runs, EXCEPT any
   # that are descendants of the current bot.sh (there shouldn't be any yet, since
@@ -3407,6 +3461,10 @@ main() {
 
   # Web-panel command queue worker
   cmdq_loop &
+
+  # Warm up qoder + MCP servers in the background so the first user message
+  # doesn't pay the cold-start cost.
+  prewarm_qoder
 
   for entry in "${entries[@]}"; do
     # First whitespace-separated field = platform:name; rest = defaults handled elsewhere
