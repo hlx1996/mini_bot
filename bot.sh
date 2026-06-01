@@ -2556,15 +2556,16 @@ handle_quota() {
       local m; m=$(model_for_key "$key")
       local thrifty; thrifty=$(_is_thrifty_model "$m")
       local mode="quality"; (( thrifty )) && mode="thrifty"
-      reply_text "$to" "📊 今日配额：$(quota_get_used "$key") / $(quota_limit_for_key "$key")
-模型：$m（$mode 模式）
-查看官方余额：https://qoder.com/dashboard"
+      local _qmsg
+      _qmsg=$(printf '📊 今日配额：%s / %s\n模型：%s（%s 模式）\n查看官方余额：https://qoder.com/dashboard' \
+        "$(quota_get_used "$key")" "$(quota_limit_for_key "$key")" "$m" "$mode")
+      reply_text "$to" "$_qmsg"
       ;;
     tokens)
       local scope="${args:-day}"
       local report; report=$(cost_report "$scope")
-      reply_text "$to" "$report
-查看官方余额 → https://qoder.com/dashboard"
+      reply_text "$to" "${report}
+查看官方余额 -> https://qoder.com/dashboard"
       ;;
     set)
       if ! is_admin "$G_FROM"; then reply_text "$to" "需要管理员权限。"; return; fi
@@ -2574,7 +2575,8 @@ handle_quota() {
       ;;
     reset)
       if ! is_admin "$G_FROM"; then reply_text "$to" "需要管理员权限。"; return; fi
-      quota_reset "$key"
+      local _qf; _qf=$(quota_today_file "$key")
+      printf '0' > "$_qf" 2>/dev/null
       reply_text "$to" "✅ 今日用量已清零"
       ;;
     *) reply_text "$to" "用法：/quota [show|tokens [day|week|all]|set <n>|reset]" ;;
@@ -3131,6 +3133,14 @@ handle_event() {
     if [[ -n "$routed" && "$routed" != "/chat" ]]; then
       log "AUTO-ROUTE key=$key '${G_TEXT:0:40}' -> $routed"
       G_TEXT="$routed"
+    fi
+  fi
+
+  # Pending model select — intercept numeric reply before any other dispatch.
+  if command -v _model_select_pending >/dev/null 2>&1 \
+     && _model_select_pending "$key"; then
+    if _model_select_handle "$G_REPLY_TO" "$key" "$G_TEXT"; then
+      return
     fi
   fi
 
