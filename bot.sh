@@ -1467,7 +1467,11 @@ Send any text / image / voice / video / file directly — multi-turn context is 
       return 0 ;;
 
     /model)
-      if [[ -z "$rest" ]]; then
+      local _mcmd="/model"; [[ -n "$rest" ]] && _mcmd="/model $rest"
+      if command -v plugin_dispatch >/dev/null 2>&1 \
+         && plugin_dispatch "$to" "$key" "$_mcmd"; then
+        :
+      elif [[ -z "$rest" ]]; then
         reply_text "$to" "当前模型：$(model_for_key "$key")"
       else
         set_model_for_key "$key" "$rest"
