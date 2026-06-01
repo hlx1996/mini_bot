@@ -1,4 +1,3 @@
-#!/usr/bin/env bash
 # lib/perf.sh — performance / cost-shaping helpers.
 #
 # Centralizes the optimization machinery (lazy MCP detection, injected-context
@@ -7,6 +6,32 @@
 # QODER_BIN, and the helpers reset_session / memory_add / get_session_uuid /
 # log defined in bot.sh. All toggles are env-var-driven; defaults are
 # conservative.
+
+# ---------- model-tier gating ------------------------------------------------
+# The optimizations below are most valuable on the expensive 'ultimate' tier;
+# on cheaper / faster tiers we'd rather pay a few cents more for a noticeably
+# better answer. _is_thrifty_model echoes 1 when we should save tokens and 0
+# when we should let the model do its best work.
+#
+# BOT_THRIFTY_MODELS: space-separated list of model names that trigger thrifty
+#   mode (default: "ultimate"). Match is substring + case-insensitive so e.g.
+#   "ultimate-50" also counts.
+# BOT_THRIFTY=force / BOT_THRIFTY=off: hard override regardless of model.
+
+_is_thrifty_model() {
+  local m="${1:-}"
+  case "${BOT_THRIFTY:-auto}" in
+    force|on|1) echo 1; return ;;
+    off|0)      echo 0; return ;;
+  esac
+  [[ -z "$m" ]] && { echo 0; return; }
+  local lm; lm=$(printf '%s' "$m" | tr '[:upper:]' '[:lower:]')
+  local pat
+  for pat in ${BOT_THRIFTY_MODELS:-ultimate}; do
+    [[ "$lm" == *"$(printf '%s' "$pat" | tr '[:upper:]' '[:lower:]')"* ]] && { echo 1; return; }
+  done
+  echo 0
+}
 
 # ---------- lazy MCP detection (B2) -----------------------------------------
 
