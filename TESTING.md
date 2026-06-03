@@ -66,6 +66,8 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 2.6 | `/memory search 测试` | 命中"测试项" | ✅ |
 | 2.7 | `/skill` | 列出可用技能（translate/summarize...） | ✅ |
 | 2.8 | `/automem` | 显示当前状态和用法 | ✅ |
+| 2.9 | 会话上下文溢出后自动自愈 | resume 返回空（仅换行）时自动 summarize→reset→换新 uuid 重试，用户仍收到回复，日志出现 `SELF-HEAL` | ✅ |
+| 2.10 | 自愈后模型选择保留 | 自动 reset 不会把模型重置为默认，`.model` 仍为用户所选 | ✅ |
 
 ### 3. 联网 & 搜索
 
@@ -82,6 +84,8 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 4.1 | `/image a cute cat` | "🎨 正在生成图片…" + 后续图片 | ✅ |
 | 4.2 | `/tts` | 显示当前 TTS 状态（on/off） | ✅ |
 | 4.3 | `/stream` | 显示当前流式状态 + 用法 | ✅ |
+| 4.4 | 发一条语音（说一句话） | 经 ASR 转写成文字后交给模型，模型按语音内容作答；日志含 `voice transcribed via <engine>`，会话内 `attachments=0`、无原始 `OggS` 二进制 | ✅ |
+| 4.5 | 发一条无法识别的语音（静音/噪声） | 过滤占位符（`[blank_audio]`/`(silence)` 等），提示用户语音暂时无法识别、可改发文字 | ✅ |
 
 ### 5. 工具
 
@@ -206,6 +210,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | `/diagram` 同上 | mermaid 渲染后图片异步推送 |
 | `/qrcode` 同上 | 二维码图片异步发送 |
 | `/backup` 需 admin | 默认无 admin，需先 `/admin add <user-id>` |
+| 上下文溢出自愈会丢失该会话历史 | 溢出会话连自身摘要也返回空，无法 compress，故该 session 的对话历史丢失；但持久记忆（`/memory`、`/pin`、automem）独立存储并重新注入，不受影响 |
 
 ---
 
