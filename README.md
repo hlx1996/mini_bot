@@ -14,7 +14,7 @@
 
 - 微信/飞书里发一句话 → bot 调 qoder-cli → 回你一句话。
 - 上下文自动续；`/reset` 重开。
-- 支持文字 / 图片 / 视频 / 语音 / 文件作为输入。
+- 支持文字 / 图片 / 视频 / 语音 / 文件作为输入。语音会先经 ASR 转成文字再交给模型（见 §语音识别）。
 - 顺带内置：定时提醒、长期记忆、文生图、TTS、网页搜索、多账号、自动备份。
 - 一个网页面板看消息和用量。
 
@@ -408,6 +408,37 @@ bash bot.sh run
 
 启用后 `state/memory/*.txt` 自动 AES-256 加密落盘（文件后缀 `.enc`）。
 不设这个变量就跟以前一样（明文，零迁移）。
+
+### 语音识别（ASR）
+
+用户发的语音消息会先用 `ffmpeg` 解码成 16k 单声道 wav，再转成文字交给模型——
+**不再**把原始 Opus 音频当附件硬塞给 qoder（那样既听不懂又会把会话上下文撑爆）。
+没装任何后端时，bot 会直接告诉用户「语音暂时识别不了，请改发文字」。
+
+后端按优先级自动探测：`openai → azure → whisper-cpp → faster-whisper`，
+也可用 `ASR_ENGINE` 强制指定。语言默认自动识别，可用 `ASR_LANG=zh` 给提示。
+
+**最快：本地离线（免费、隐私，不上传语音）**
+
+```bash
+brew install whisper-cpp                      # 提供 whisper-cli
+mkdir -p ~/.qoder/models/whisper && cd "$_"
+curl -LO https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin
+```
+
+然后在 `.env` 里写：
+
+```bash
+ASR_ENGINE=whisper-cpp
+WHISPER_CPP_MODEL=/Users/你/.qoder/models/whisper/ggml-small.bin
+```
+
+重启 bot 即可（`scripts/stop.sh && nohup scripts/watchdog.sh &`）。
+模型选择：`tiny`(快/糙) → `base` → `small`(推荐) → `medium` → `large-v3`(慢/准)。
+
+**云端（更准，按量计费）**：设 `OPENAI_API_KEY` 走 Whisper API，
+或复用上面 Azure 的 `AZURE_SPEECH_KEY/REGION` 走 Azure 语音转文字。
+完整可选项见 `.env.example` 的「ASR」段。
 
 ### TTS 高级：Azure 神经语音（情感 / 多语言）
 
