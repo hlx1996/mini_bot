@@ -137,6 +137,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 7.2 | `/timer 5s test` | "⏰ Timer 启动：5s" → 5秒后 "⏰ 时间到（5s）：test" | ✅ |
 | 7.3 | `/pomodoro list` | "(无)" + 用法 | ✅ |
 | 7.4 | `/calendar list` | 日历内容或空提示 | ✅ |
+| 7.5 | `/cron add "0 * * * *" "hi"` → 等下次整点触发 | 群里收到 qoder 回复（crontab PATH 由 bot.sh 启动时自动补全 `/opt/homebrew/bin` 等，cron 环境能正常找到 lark-cli / qodercli） | ✅ |
 
 ### 8. 数据持久化
 
