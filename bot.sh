@@ -1,6 +1,18 @@
 #!/usr/bin/env bash
 # mini_bot — Multi-platform (WeChat + Lark/Feishu) interactive bot powered by qodercli.
 #
+# When invoked from crontab (bot.sh --cron-fire ...), PATH is limited to
+# /usr/bin:/bin. Augment here so lark-cli / qodercli / ffmpeg are always visible.
+for _p in "$HOME/.local/bin" "$HOME/bin" "/opt/homebrew/bin" "/opt/homebrew/sbin" "/usr/local/bin" "/usr/local/sbin"; do
+  [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && PATH="$_p:$PATH"
+done
+for _p in "$HOME"/Library/Python/*/bin; do
+  [[ -d "$_p" && ":$PATH:" != *":$_p:"* ]] && PATH="$_p:$PATH"
+done
+export PATH
+unset _p
+
+#
 # Architecture:
 #
 #   微信用户 ──→ iLink ──→ WeixinClawBot ──→ wxlink.py subscribe ──┐
