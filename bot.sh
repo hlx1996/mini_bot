@@ -140,6 +140,7 @@ reset_session() {
   enc_remove "$SESS_DIR/$key.uuid"
   rm -f "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock" \
         "$SESS_DIR/$key.chars" "$SESS_DIR/$key.automem_count"
+  command -v fuyao_reset >/dev/null 2>&1 && fuyao_reset "$key"
 }
 
 wxlink() {
