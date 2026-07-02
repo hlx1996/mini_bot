@@ -28,3 +28,5 @@ state/bridges.tsv
 state/contacts_seen.tsv
 state/contacts.tsv
 state/watchdog.pid
+.omo/
+AGENTS.md

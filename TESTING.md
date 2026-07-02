@@ -1,7 +1,7 @@
 # mini_bot 测试指南
 
-> 最近全量通过日期：2026-06-01
-> 测试模型：lite（节省配额）
+> 最近全量通过日期：2026-07-03
+> 默认测试模型：lite（节省配额）
 > 测试方式：通过 `lark-cli im +messages-send --as user` 向机器人发消息，检查 `state/logs/events.jsonl` 中的回复
 
 ---
@@ -25,12 +25,26 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 ### 测试前准备
 
 ```bash
-# 切到 lite 模型（省配额）
+# 切到测试模型（默认 lite，省配额）
 /model lite
 
 # 测试完成后恢复
-/model qmodel_latest
+/model lite
 ```
+
+### 切换模型全量测试
+
+可指定任意模型跑下面的全部用例。步骤：
+
+```bash
+# 1. 切到目标模型
+/model select   # 选 15(fuyao-deepseek) / 16(fuyao-glm) / 17(fuyao-kimi) 等
+# 2. 跑全部测试用例
+# 3. 测试完毕切回 lite
+/model lite
+```
+
+Fuyao 模型通过 opencode harness 运行，功能应与 qodercli 模型对等（多轮对话、工具调用、文件读写等）。
 
 ---
 
@@ -44,9 +58,9 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 1.2 | `/reset` | "✅ 已清空本会话记忆" | ✅ |
 | 1.3 | `/status` | 返回 host/qoder/soul/model/quota 信息 | ✅ |
 | 1.4 | `/model` | "当前模型：lite" | ✅ |
-| 1.5 | `/model select` | 显示 14 个模型编号列表 | ✅ |
+| 1.5 | `/model select` | 显示 17 个模型编号列表 | ✅ |
 | 1.6 | (回复数字 `12`) | "✅ 已切换模型为：Qwen3.7-Max (qmodel_latest) [5x credit]" | ✅ |
-| 1.7 | `/model select` → 回复 `99` | "❌ Out of range (1-14)" | ✅ |
+| 1.7 | `/model select` → 回复 `99` | "❌ Out of range (1-17)" | ✅ |
 | 1.8 | `/model select` → 回复非数字 | 正常走聊天（不报错） | ✅ |
 | 1.9 | `/model ultimate` | "✅ 已切换模型为：ultimate" | ✅ |
 | 1.10 | `/quota` | 显示配额数字 + 模型名 + 模式（quality/thrifty） | ✅ |
@@ -199,6 +213,18 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 12.1 | `/model ultimate` → `/quota` | 显示"thrifty 模式" | ✅ |
 | 12.2 | `/model lite` → `/quota` | 显示"quality 模式" | ✅ |
 | 12.3 | `/model qmodel_latest` → `/quota` | 显示"quality 模式" | ✅ |
+
+### 13. Fuyao 模型（opencode harness）
+
+> 测试前：`/model select` → 选 17（fuyao-kimi）。测试后：`/model lite` 切回。
+
+| # | 操作 | 期望结果 | 状态 |
+|---|------|----------|------|
+| 13.1 | `/model select` → `17` | "✅ 已切换模型为：Fuyao-Kimi (fuyao-kimi) [0x credit]" | ✅ |
+| 13.2 | `我叫测试员，记住` → `我叫什么` | 第二轮能正确回忆"测试员"（多轮 session 保持） | ✅ |
+| 13.3 | `列出当前目录下的文件` | 返回文件列表（工具能力：ls/file read） | ✅ |
+| 13.4 | `/reset` → `我叫什么` | 无法回忆（session 已清除） | ✅ |
+| 13.5 | `/model lite` | 切回 lite | ✅ |
 
 ---
 

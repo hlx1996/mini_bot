@@ -139,8 +139,8 @@ reset_session() {
   local key="$1"
   enc_remove "$SESS_DIR/$key.uuid"
   rm -f "$SESS_DIR/$key.started" "$SESS_DIR/$key.model" "$SESS_DIR/$key.lock" \
-        "$SESS_DIR/$key.chars" "$SESS_DIR/$key.automem_count"
-  command -v fuyao_reset >/dev/null 2>&1 && fuyao_reset "$key"
+        "$SESS_DIR/$key.chars" "$SESS_DIR/$key.automem_count" \
+        "$SESS_DIR/$key.oc_session" "$SESS_DIR/$key.fuyao_history"
 }
 
 wxlink() {
@@ -320,7 +320,8 @@ run_with_heartbeat() {
 
   if _is_fuyao_model "$model"; then
     log "FUYAO call model=$model prompt_len=${#prompt}"
-    ( run_fuyao_chat "$prompt" "$key" "$model" >"$out_file" ) &
+    ( run_opencode_agent "$prompt" "$key" "$workspace" "$model" \
+        ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
   else
     ( run_qoder_agent "$prompt" "$key" "$workspace" "$model" \
         ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
