@@ -399,6 +399,27 @@ mini_bot 自带一组省 token + 提升响应速度的开关，默认启用、�
 `URL-FETCH injected (+N chars; used=N)`、`AUTO-COMPRESS`、`AUTO-ROUTE` 等
 诊断行，对应上面每条优化是否触发。
 
+### Fuyao 私有推理网关
+
+`/model select` 中提供三个 Fuyao 内部模型（绕过 qodercli，直连公司 GPU 推理网关）：
+
+| 编号 | 模型 | 底层 | 上下文 |
+|---|---|---|---|
+| 15 | Fuyao-DeepSeek | deepseek-v4-flash | 128K |
+| 16 | Fuyao-GLM | glm-5.2 | 256K |
+| 17 | Fuyao-Kimi | kimi-k2.6 | 256K |
+
+**配置（`.env`）：**
+
+```bash
+FUYAO_API_KEY=<your-fuyao-api-key>
+# FUYAO_BASE_URL=https://your-fuyao-gateway.example.com/v1  # 默认即此
+```
+
+获取 key：<https://your-fuyao-portal.example.com/#/home> → 用户中心 → API Key。
+
+**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型为纯聊天（无工具/MCP/session），但仍注入 memory/pin 长期记忆。
+
 ### 加密保存对话/记忆
 
 ```bash
