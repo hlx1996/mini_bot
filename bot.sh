@@ -318,9 +318,8 @@ run_with_heartbeat() {
   lock_file="$SESS_DIR/$key.lock"
 
   if _is_fuyao_model "$model"; then
-    local sys_prompt; sys_prompt=$(build_system_prompt "$key")
     log "FUYAO call model=$model prompt_len=${#prompt}"
-    ( run_fuyao_chat "$prompt" "$sys_prompt" "$model" >"$out_file" ) &
+    ( run_fuyao_chat "$prompt" "$key" "$model" >"$out_file" ) &
   else
     ( run_qoder_agent "$prompt" "$key" "$workspace" "$model" \
         ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
