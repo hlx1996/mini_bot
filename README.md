@@ -399,9 +399,10 @@ mini_bot 自带一组省 token + 提升响应速度的开关，默认启用、�
 `URL-FETCH injected (+N chars; used=N)`、`AUTO-COMPRESS`、`AUTO-ROUTE` 等
 诊断行，对应上面每条优化是否触发。
 
-### Fuyao 私有推理网关
+### Fuyao 私有推理网关（via opencode）
 
-`/model select` 中提供三个 Fuyao 内部模型（绕过 qodercli，直连公司 GPU 推理网关）：
+`/model select` 中提供三个 Fuyao 内部模型，通过 [opencode](https://opencode.ai) 作为 harness 运行——
+与 qodercli 模型功能对等（文件读写、shell、联网搜索、多轮对话等）：
 
 | 编号 | 模型 | 底层 | 上下文 |
 |---|---|---|---|
@@ -409,16 +410,44 @@ mini_bot 自带一组省 token + 提升响应速度的开关，默认启用、�
 | 16 | Fuyao-GLM | glm-5.2 | 256K |
 | 17 | Fuyao-Kimi | kimi-k2.6 | 256K |
 
-**配置（`.env`）：**
+**安装 opencode：**
 
 ```bash
-FUYAO_API_KEY=<your-fuyao-api-key>
-# FUYAO_BASE_URL=https://your-fuyao-gateway.example.com/v1  # 默认即此
+curl -fsSL https://opencode.ai/install | bash
+```
+
+**配置 Fuyao provider（`~/.config/opencode/opencode.json`）：**
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "provider": {
+    "fuyao": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": {
+        "apiKey": "<your-fuyao-api-key>",
+        "baseURL": "https://your-fuyao-gateway.example.com/v1"
+      },
+      "models": {
+        "fuyao-deepseek": {},
+        "fuyao-glm": {},
+        "fuyao-kimi": {}
+      }
+    }
+  }
+}
 ```
 
 获取 key：<https://your-fuyao-portal.example.com/#/home> → 用户中心 → API Key。
 
-**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型为纯聊天（无工具/MCP/session），但仍注入 memory/pin 长期记忆。
+**验证安装：**
+
+```bash
+opencode models fuyao            # 应列出 fuyao-deepseek / fuyao-glm / fuyao-kimi
+opencode run -m "fuyao/fuyao-kimi" "say hi"   # 应返回 Hi
+```
+
+**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型具备完整 agent 能力（文件、Shell、搜索），支持多轮对话 session 保持。
 
 ### 加密保存对话/记忆
 
