@@ -217,6 +217,9 @@ _model_select_catalog() {
 12|qmodel_latest|Qwen3.7-Max|5x
 13|performance|Performance|5x
 14|ultimate|Ultimate|10x
+15|fuyao-deepseek|Fuyao-DeepSeek|0x
+16|fuyao-glm|Fuyao-GLM|0x
+17|fuyao-kimi|Fuyao-Kimi|0x
 CATALOG
 }
 
@@ -233,7 +236,7 @@ _model_select_handle() {
   local n="$text"
   local line; line=$(_model_select_catalog | sed -n "${n}p")
   if [[ -z "$line" ]]; then
-    reply_text "$to" "❌ Out of range (1-14)"
+    reply_text "$to" "❌ Out of range (1-17)"
     return 0
   fi
   local model_id; model_id=$(printf '%s' "$line" | cut -d'|' -f2)
