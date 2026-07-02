@@ -96,7 +96,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh asr.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh perf.sh; do
+for _mod in lark.sh agents.sh tts.sh asr.sh fuyao.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh perf.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -317,8 +317,14 @@ run_with_heartbeat() {
   out_file=$(mktemp -t qoder.XXXXXX)
   lock_file="$SESS_DIR/$key.lock"
 
-  ( run_qoder_agent "$prompt" "$key" "$workspace" "$model" \
-      ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
+  if _is_fuyao_model "$model"; then
+    local sys_prompt; sys_prompt=$(build_system_prompt "$key")
+    log "FUYAO call model=$model prompt_len=${#prompt}"
+    ( run_fuyao_chat "$prompt" "$sys_prompt" "$model" >"$out_file" ) &
+  else
+    ( run_qoder_agent "$prompt" "$key" "$workspace" "$model" \
+        ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
+  fi
   local qpid=$!
   echo "$qpid" > "$lock_file"
 
@@ -3427,7 +3433,10 @@ $hook_out"
     fi
   fi
   if (( _cache_hit == 0 )); then
-    if stream_is_on "$key"; then
+    if _is_fuyao_model "$model"; then
+      answer=$(run_with_heartbeat "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
+                ${attachments[@]+"${attachments[@]}"})
+    elif stream_is_on "$key"; then
       answer=$(run_with_streaming "$G_REPLY_TO" "$key" "$workspace" "$model" "$prompt" \
                 ${attachments[@]+"${attachments[@]}"})
     else
