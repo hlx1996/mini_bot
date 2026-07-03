@@ -96,7 +96,7 @@ PYTHON_BIN="${PYTHON_BIN:-python3}"
 SYSTEM_PROMPT_LEGACY='(see build_system_prompt — souls/default.txt)'
 
 # Load extracted modules.
-for _mod in lark.sh agents.sh tts.sh asr.sh fuyao.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh perf.sh; do
+for _mod in lark.sh agents.sh tts.sh asr.sh fuyao.sh crypt.sh router.sh skill_router.sh cost.sh bridge.sh plugins.sh plugin_utils.sh perf.sh api_server.sh; do
   _f="$SCRIPT_DIR/lib/$_mod"
   [[ -f "$_f" ]] && source "$_f"
 done
@@ -327,10 +327,10 @@ run_with_heartbeat() {
 
   if _is_fuyao_model "$model"; then
     log "FUYAO call model=$model prompt_len=${#prompt}"
-    ( run_opencode_agent "$prompt" "$key" "$workspace" "$model" \
+    ( run_agent "$prompt" "$key" "$workspace" "$model" \
         ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
   else
-    ( run_qoder_agent "$prompt" "$key" "$workspace" "$model" \
+    ( run_agent "$prompt" "$key" "$workspace" "$model" \
         ${attachments[@]+"${attachments[@]}"} >"$out_file" ) &
   fi
   local qpid=$!
@@ -505,7 +505,11 @@ run_agent() {
   local prompt="$1" key="$2" workspace="$3" model="$4"
   shift 4
   if _is_fuyao_model "$model"; then
-    run_opencode_agent "$prompt" "$key" "$workspace" "$model" "$@"
+    if [[ "${FUYAO_DIRECT:-1}" == "1" ]]; then
+      run_fuyao_direct "$prompt" "$key" "$workspace" "$model" "$@"
+    else
+      run_opencode_agent "$prompt" "$key" "$workspace" "$model" "$@"
+    fi
   else
     run_qoder_agent  "$prompt" "$key" "$workspace" "$model" "$@"
   fi
@@ -2232,7 +2236,7 @@ $listing
 
 搜索摘要：
 $hits"
-      answer=$(run_qoder_agent "$qa_prompt" "$key" \
+      answer=$(run_agent "$qa_prompt" "$key" \
                 "$WORK_ROOT/$key" "$(model_for_key "$key")" 2>/dev/null) || answer=""
       [[ -z "$answer" ]] && answer="(qoder 无回复)
 $hits"
@@ -3705,6 +3709,12 @@ main() {
   fi
   # Load drop-in plugins (plugins/*.sh) now that all helpers are defined.
   command -v plugins_load >/dev/null 2>&1 && plugins_load
+
+  # Start API proxy server if enabled (OpenAI-compatible HTTP endpoint)
+  if [[ "${BOT_API_SERVER:-0}" == "1" ]] && command -v start_api_server >/dev/null 2>&1; then
+    start_api_server
+    trap 'stop_api_server' EXIT INT TERM
+  fi
 
   case "${1:-}" in
     -h|--help)    usage; exit 0 ;;
