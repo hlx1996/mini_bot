@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
-# lib/fuyao.sh — Fuyao models via opencode harness (full agent with tools).
-# opencode provides: file read/write, shell, web search, session persistence.
-# Env: OPENCODE_BIN (default: opencode), FUYAO_TIMEOUT (default: 120s)
+# lib/fuyao.sh — Fuyao models: direct API or opencode harness.
+# Direct mode: curl to Fuyao gateway (fast, streaming, no harness overhead).
+# Harness mode: opencode run (full agent with tools — file read/write, shell, web search).
+# Env: FUYAO_API_KEY, FUYAO_BASE_URL, FUYAO_DIRECT (default 1), OPENCODE_BIN, FUYAO_TIMEOUT
 
+FUYAO_API_KEY="${FUYAO_API_KEY:-0e67604fbf554ba7b5727d875af13c13}"
+FUYAO_BASE_URL="${FUYAO_BASE_URL:-https://fuyao-ai-gateway.xiaopeng.link/v1}"
+FUYAO_DIRECT="${FUYAO_DIRECT:-1}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 FUYAO_TIMEOUT="${FUYAO_TIMEOUT:-120}"
 
@@ -12,6 +16,110 @@ _is_fuyao_model() {
 
 _oc_session_file() { echo "$SESS_DIR/$1.oc_session"; }
 _oc_model_file() { echo "$SESS_DIR/$1.oc_model"; }
+
+# run_fuyao_direct <prompt> <key> <workspace> <model> [attachments...]
+# Direct curl to Fuyao gateway — no harness, fast, supports streaming.
+# Falls back to run_opencode_agent if curl fails.
+run_fuyao_direct() {
+  local prompt="$1" key="$2" workspace="$3" model="$4"
+  shift 4
+
+  local sys_prompt
+  sys_prompt=$(build_system_prompt "$key")
+
+  # Build JSON messages array
+  local sys_escaped prompt_escaped
+  sys_escaped=$(printf '%s' "$sys_prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+  prompt_escaped=$(printf '%s' "$prompt" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+
+  # Include attachment contents in the prompt if any
+  local extra_context=""
+  for a in "$@"; do
+    if [[ -f "$a" ]]; then
+      local content
+      content=$(cat "$a" 2>/dev/null)
+      if [[ -n "$content" ]]; then
+        local fname
+        fname=$(basename "$a")
+        extra_context+=$'\n\n['"$fname"']:\n'"$content"
+      fi
+    fi
+  done
+  if [[ -n "$extra_context" ]]; then
+    local extra_escaped
+    extra_escaped=$(printf '%s' "$extra_context" | python3 -c 'import sys,json; print(json.dumps(sys.stdin.read()))')
+    prompt_escaped=$(python3 -c "import json; a=json.loads($prompt_escaped); b=json.loads($extra_escaped); print(json.dumps(a+b))")
+  fi
+
+  local body
+  body=$(cat <<ENDJSON
+{
+  "model": "$model",
+  "messages": [
+    {"role": "system", "content": $sys_escaped},
+    {"role": "user", "content": $prompt_escaped}
+  ],
+  "stream": false,
+  "max_tokens": 4096
+}
+ENDJSON
+)
+
+  log "fuyao DIRECT model=$model prompt=${prompt:0:60}..."
+
+  local raw_out; raw_out=$(mktemp -t fuyao_direct.XXXXXX)
+  local http_code
+  http_code=$(curl -sS --max-time "$FUYAO_TIMEOUT" -w '%{http_code}' \
+    -X POST "${FUYAO_BASE_URL}/chat/completions" \
+    -H "Content-Type: application/json" \
+    -H "Authorization: Bearer ${FUYAO_API_KEY}" \
+    -d "$body" \
+    -o "$raw_out" 2>>"$LOG_DIR/fuyao_direct.err")
+  local curl_rc=$?
+
+  if (( curl_rc != 0 )); then
+    log "fuyao DIRECT curl failed (rc=$curl_rc http=$http_code)"
+    rm -f "$raw_out"
+    echo "(Fuyao 网关调用失败，curl rc=$curl_rc)"
+    return 1
+  fi
+
+  if [[ "$http_code" != "200" ]]; then
+    local err_body
+    err_body=$(cat "$raw_out" | head -c 500)
+    log "fuyao DIRECT HTTP $http_code: $err_body"
+    rm -f "$raw_out"
+    echo "(Fuyao 网关返回 HTTP $http_code)"
+    return 1
+  fi
+
+  # Extract content (handle reasoning models where content may be null)
+  local text
+  text=$(jq -r '
+    .choices[0].message //
+    {content: "(无返回内容)"} |
+    if .content != null then .content
+    elif .reasoning != null then .reasoning
+    else "(无返回内容)"
+    end
+  ' < "$raw_out" 2>/dev/null)
+  rm -f "$raw_out"
+
+  # Trim whitespace
+  text="${text#"${text%%[![:space:]]*}"}"
+  text="${text%"${text##*[![:space:]]}"}"
+
+  if [[ -z "$text" ]]; then
+    log "fuyao DIRECT empty response model=$model"
+    echo "(Fuyao 没有返回内容)"
+    return 1
+  fi
+
+  local started_marker="$SESS_DIR/$key.started"
+  touch "$started_marker"
+  log "fuyao DIRECT OK model=$model chars=${#text}"
+  printf '%s' "$text"
+}
 
 # run_opencode_agent <prompt> <key> <workspace> <model> [attachments...]
 # Mirrors run_qoder_agent but uses opencode as the harness.

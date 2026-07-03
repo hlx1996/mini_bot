@@ -447,7 +447,62 @@ opencode models fuyao            # 应列出 fuyao-deepseek / fuyao-glm / fuyao-
 opencode run -m "fuyao/fuyao-kimi" "say hi"   # 应返回 Hi
 ```
 
-**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型具备完整 agent 能力（文件、Shell、搜索），支持多轮对话 session 保持。
+**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型默认走直连模式（curl 直调网关，秒回）。设置 `FUYAO_DIRECT=0` 可回退到 opencode harness（具备文件、Shell、搜索等 agent 能力）。
+
+### API Server（OpenAI-compatible 代理模式）
+
+mini_bot 内置一个 OpenAI 兼容的 HTTP API 服务，外部工具（opencode、IDE 插件、自定义客户端）可直连使用 mini_bot 支持的所有模型，无需走飞书/微信消息通道。
+
+**架构：**
+
+```
+外部工具 → POST http://localhost:9877/v1/chat/completions → mini_bot API Server
+                                                              ├─ Fuyao 模型 → 直连网关 (streaming SSE)
+                                                              └─ 其他模型 → qodercli 桥接
+```
+
+**启动：**
+
+```bash
+# .env 里加：
+BOT_API_SERVER=1
+BOT_API_PORT=9877
+FUYAO_API_KEY=<your-key>
+FUYAO_BASE_URL=https://fuyao-ai-gateway.xiaopeng.link/v1
+
+# 随 bot 自动启动，或手动启动：
+node lib/api_server.js
+```
+
+**接口：**
+
+| 端点 | 说明 |
+|---|---|
+| `POST /v1/chat/completions` | 聊天补全（支持 streaming SSE） |
+| `GET /v1/models` | 列出所有可用模型 |
+| `GET /health` | 健康检查 |
+
+**模型名称：** 直接传 mini_bot 的模型 ID（如 `fuyao-deepseek`、`lite`、`ultimate`），或带 `mb-` 前缀（如 `mb-fuyao-deepseek`，自动去掉前缀）。
+
+**在 opencode 中使用：**
+
+```json
+{
+  "provider": {
+    "mb": {
+      "npm": "@ai-sdk/openai-compatible",
+      "options": { "apiKey": "local", "baseURL": "http://localhost:9877/v1" },
+      "models": {
+        "mb-fuyao-deepseek": { "name": "MB-Fuyao-DeepSeek" },
+        "mb-fuyao-glm": { "name": "MB-Fuyao-GLM" },
+        "mb-lite": { "name": "MB-Lite" }
+      }
+    }
+  }
+}
+```
+
+然后在 opencode 中选 `mb/mb-fuyao-deepseek` 即可直连。详见 [mini_bot_client](../mini_bot_client) 项目获取完整的智能路由方案（内网直连 / 外网自动走飞书通道）。
 
 ### 加密保存对话/记忆
 
@@ -616,6 +671,12 @@ lark:lark_main      cat         qoder-cli
 | `BOT_AUTO_COMPRESS` / `BOT_COMPRESS_AT` | 长会话自动压缩开关 / 触发阈值（默认 120000 字符） |
 | `BOT_AUTOMEM_MINLEN` / `BOT_AUTOMEM_EVERY` | `/automem` 抽取的长度门槛 / 频率（默认 80 字、每 5 轮） |
 | `BOT_PLUGIN_LAZY` | `0` 关闭插件懒加载，启动即 source 全部（默认 1） |
+| `BOT_API_SERVER` | `1` 启动 OpenAI-compatible API Server（默认关闭） |
+| `BOT_API_PORT` | API Server 端口（默认 9877） |
+| `FUYAO_DIRECT` | `1` Fuyao 模型直连网关，`0` 走 opencode harness（默认 1） |
+| `FUYAO_API_KEY` | Fuyao 网关 API Key |
+| `FUYAO_BASE_URL` | Fuyao 网关地址（默认 `https://fuyao-ai-gateway.xiaopeng.link/v1`） |
+| `FUYAO_TIMEOUT` | Fuyao 调用超时秒数（默认 120） |
 
 ---
 
