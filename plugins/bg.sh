@@ -2,11 +2,11 @@
 # plugins/bg.sh — 后台思考：把一个长问题甩进后台跑，立刻返回，结果好了再推。
 #
 # 用法：
-#   /bg <问题>              立即回 "🤔" + 后台跑 qoder，结果好了用同会话的 session 推回去
+#   /bg <问题>              立即回 "🤔" + 后台跑 qoder/opencode（按当前 /model 路由），结果好了用同会话的 session 推回去
 #   /bg list                看正在跑的任务
 #   /bg cancel <id>         杀掉
 #
-# 实现：fork 一个 nohup 子进程跑 run_qoder_agent。子进程结束时 reply_text
+# 实现：fork 一个 nohup 子进程跑 run_agent（按当前 /model 路由到 qodercli 或 opencode）。子进程结束时 reply_text
 # 推结果。元数据写 state/sessions/<key>.bg.tsv：id\tpid\tstarted_ts\tprompt[:60]
 
 _BG_TSV() { echo "$SESS_DIR/$1.bg.tsv"; }
@@ -28,15 +28,26 @@ _bg_cleanup() {
 _bg_runner() {
   # _bg_runner <to> <key> <workspace> <model> <id> <platform> <account> <prompt>
   local to="$1" key="$2" workspace="$3" model="$4" id="$5" plat="$6" acct="$7" prompt="$8"
-  # Use an ISOLATED qoder session (no --resume / --session-id) so the bg task
-  # doesn't race with the user's main session if they keep chatting.
-  local sys out rc
+  # Use a dedicated "$key.bg" session so bg tasks don't race with the chat
+  # session if the user keeps chatting (both qodercli --resume and opencode
+  # --session derive their session file from $key).
+  local bg_key="${key}.bg"
+  local sys out rc sys_file=""
   sys=$(build_system_prompt "$key" 2>/dev/null) || sys=""
-  out=$("$QODER_BIN" -p "$prompt" -m "$model" --cwd "$workspace" \
-        --reasoning-effort high --permission-mode bypass_permissions \
-        --append-system-prompt "$sys" --max-output-tokens 4000 \
-        2>>"$LOG_DIR/qoder.err")
-  rc=$?
+  if [[ -n "$sys" ]]; then
+    sys_file=$(mktemp -t bg_sys.XXXXXX)
+    printf '%s' "$sys" > "$sys_file"
+  fi
+  if [[ -n "$sys_file" ]]; then
+    out=$(run_agent "$prompt" "$bg_key" "$workspace" "$model" "$sys_file" \
+          2>>"$LOG_DIR/qoder.err")
+    rc=$?
+    rm -f "$sys_file"
+  else
+    out=$(run_agent "$prompt" "$bg_key" "$workspace" "$model" \
+          2>>"$LOG_DIR/qoder.err")
+    rc=$?
+  fi
   [[ -z "$out" ]] && out="(后台任务 #$id 没有产出，rc=$rc)"
   G_PLATFORM="$plat" G_ACCOUNT_NAME="$acct" \
     reply_text "$to" "💡 后台任务 #${id} 结果：

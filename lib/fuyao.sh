@@ -42,6 +42,11 @@ run_opencode_agent() {
   local args=( run -m "fuyao/$model" --dangerously-skip-permissions
                --dir "$workspace" --format json )
 
+  # IMPORTANT: prompt positional must come BEFORE `-f` flags. opencode's yargs
+  # parser greedily absorbs every positional after `-f` as a file path, so
+  # "opencode run -f sys.txt '1+1'" fails with "File not found: 1+1".
+  args+=( "$prompt" )
+
   for a in ${attachments[@]+"${attachments[@]}"}; do
     args+=( -f "$a" )
   done
@@ -55,8 +60,6 @@ run_opencode_agent() {
   else
     log "opencode NEW model=$model cwd=$workspace"
   fi
-
-  args+=( "$prompt" )
 
   local raw_out; raw_out=$(mktemp -t oc_out.XXXXXX)
 

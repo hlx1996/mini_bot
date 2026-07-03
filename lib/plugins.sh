@@ -9,8 +9,8 @@
 # The handler is invoked as:  handler_func "$to" "$key" "$rest"
 # Return 0 if the plugin "ate" the message; non-zero falls through.
 #
-# Plugins inherit the bot's full shell — all helpers (reply_text, run_qoder_agent,
-# memory_*, contact_*, bridge_*, ...) are in scope. Keep them small.
+# Plugins inherit the bot's full shell — all helpers (reply_text, run_agent,
+# run_qoder_agent, run_opencode_agent, memory_*, contact_*, bridge_*, ...) are in scope. Prefer run_agent over run_qoder_agent so the current /model is honored. Keep them small.
 #
 # LAZY LOADING (D): instead of sourcing every plugin file at startup, we pre-scan
 # the files for their `register_command "..."` lines and cache that to a manifest
