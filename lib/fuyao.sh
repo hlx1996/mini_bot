@@ -25,7 +25,13 @@ run_fuyao_direct() {
   shift 4
 
   local sys_prompt
-  sys_prompt=$(build_system_prompt "$key")
+  local soul_name mem gmem
+  soul_name=$(current_soul_for_key "$key" 2>/dev/null)
+  sys_prompt=$(soul_text "$soul_name" 2>/dev/null || echo "你是一个有帮助的AI助手。")
+  mem=$(memory_show "$key" 2>/dev/null)
+  [[ "$mem" != "(本会话暂无记忆)" && -n "$mem" ]] && sys_prompt+=$'\n\n[记忆]:\n'"$mem"
+  gmem=$(memory_show_global 2>/dev/null)
+  [[ "$gmem" != "(全局记忆暂为空)" && -n "$gmem" ]] && sys_prompt+=$'\n\n[全局记忆]:\n'"$gmem"
 
   # Build JSON messages array
   local sys_escaped prompt_escaped
