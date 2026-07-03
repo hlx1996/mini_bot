@@ -89,7 +89,7 @@ ${clipped}"
       local workspace model ans
       workspace=$(cwd_resolve_workspace "$key" "$WORK_ROOT/$key"); mkdir -p "$workspace"
       model=$(model_for_key "$key")
-      ans=$(run_qoder_agent "$prompt" "$key" "$workspace" "$model" 2>/dev/null) || ans=""
+      ans=$(run_agent "$prompt" "$key" "$workspace" "$model" 2>/dev/null) || ans=""
       [[ -z "$ans" ]] && ans="(摘要生成失败，看 logs/qoder.err)"
       reply_text "$to" "📰 最近 ${hours}h 摘要（$line_count 条消息）：
 

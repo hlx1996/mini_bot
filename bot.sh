@@ -279,13 +279,20 @@ run_qoder_agent() {
   # Self-heal: a resumed session that returns rc=0 with empty output has
   # overflowed its context window (e.g. a large binary attachment was inlined
   # into history). qoder silently emits nothing on every resume thereafter.
-  # Recover the session memory, drop the dead uuid, and retry once fresh.
+  # Also covers non-zero rc when resuming (e.g. "Invalid session identifier"
+  # after a stale uuid file survived a partial reset, or after the qoder
+  # session store was wiped). In either case, summarize+reset+retry once fresh.
   # NOTE: an overflowed resume emits a lone newline (size 1), not a 0-byte file,
   # so test for whitespace-only content rather than -s.
   local _qa_blank=0
   { local _qa_c; _qa_c=$(cat "$_qa_out"); [[ -z "${_qa_c//[$' \t\n\r']/}" ]] && _qa_blank=1; }
-  if (( resuming )) && [[ $rc -eq 0 ]] && (( _qa_blank )); then
-    log "qoder SELF-HEAL: empty resume on uuid=$session_uuid — summarizing, resetting, retrying fresh"
+  local _qa_need_heal=0
+  if (( resuming )); then
+    if [[ $rc -eq 0 ]] && (( _qa_blank )); then _qa_need_heal=1; fi
+    if [[ $rc -ne 0 ]]; then _qa_need_heal=2; fi
+  fi
+  if (( _qa_need_heal )); then
+    log "qoder SELF-HEAL (reason=$_qa_need_heal) uuid=$session_uuid — summarizing, resetting, retrying fresh"
     local _saved_model; _saved_model=$(model_for_key "$key")
     _session_compress "$key" "$model" "$workspace" 2>>"$LOG_DIR/qoder.err" || true
     reset_session "$key"
@@ -451,14 +458,20 @@ run_with_streaming() {
   wait "$prog_reader" 2>/dev/null
   rm -f "$fifo"
 
-  # Self-heal: same overflow recovery as run_qoder_agent. A resumed session that
-  # returns rc=0 with no meaningful output has overflowed its context window;
-  # reset and retry once fresh (non-streamed) so the user still gets an answer.
+  # Self-heal: same recovery as run_qoder_agent. A resumed session that returns
+  # rc=0 with no meaningful output has overflowed its context window; a non-zero
+  # rc usually means "Invalid session identifier" (stale uuid). Either way,
+  # summarize+reset+retry once fresh (non-streamed) so the user still gets an answer.
   # Treat whitespace-only output (e.g. a lone newline) as empty.
   local _st_blank=0
   { local _st_c; _st_c=$(cat "$out_file"); [[ -z "${_st_c//[$' \t\n\r']/}" ]] && _st_blank=1; }
-  if (( resuming )) && [[ $rc -eq 0 ]] && (( _st_blank )); then
-    log "qoder STREAM SELF-HEAL: empty resume on uuid=$session_uuid — summarizing, resetting, retrying fresh"
+  local _st_need_heal=0
+  if (( resuming )); then
+    if [[ $rc -eq 0 ]] && (( _st_blank )); then _st_need_heal=1; fi
+    if [[ $rc -ne 0 ]]; then _st_need_heal=2; fi
+  fi
+  if (( _st_need_heal )); then
+    log "qoder STREAM SELF-HEAL (reason=$_st_need_heal) uuid=$session_uuid — summarizing, resetting, retrying fresh"
     local _saved_model; _saved_model=$(model_for_key "$key")
     _session_compress "$key" "$model" "$workspace" 2>>"$LOG_DIR/qoder.err" || true
     reset_session "$key"
@@ -482,6 +495,20 @@ run_with_streaming() {
   [[ $rc -eq 0 ]] && touch "$started_marker"
   cat "$out_file"
   rm -f "$out_file"
+}
+
+# run_agent <prompt> <key> <workspace> <model> [attachments...]
+# Model-aware dispatcher: plugins (/bg, /digest, /translate-doc, …) call this
+# so they honor the current /model selection. Fuyao models route to the
+# opencode harness; everything else goes through qodercli.
+run_agent() {
+  local prompt="$1" key="$2" workspace="$3" model="$4"
+  shift 4
+  if _is_fuyao_model "$model"; then
+    run_opencode_agent "$prompt" "$key" "$workspace" "$model" "$@"
+  else
+    run_qoder_agent  "$prompt" "$key" "$workspace" "$model" "$@"
+  fi
 }
 
 ###############################################################################
@@ -2570,7 +2597,7 @@ handle_mcp() {
       else
         reply_text "$to" "🔌 MCP servers：
 $(list_mcp_servers)
-(qoder 通过 --mcp-config 自动加载 $MCP_CONFIG；改完立刻生效，无需 reload)"
+(qoder 通过 --mcp-config 自动加载 ${MCP_CONFIG}；改完立刻生效，无需 reload)"
       fi
       ;;
     reload)
