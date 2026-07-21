@@ -56,7 +56,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 - `/run`、`/calc`、`/bg`、`/digest` 等工具类命令：Fuyao 通过 opencode shell 工具执行，结果格式一致（/bg 使用独立的 `${key}.bg` session 避免与主会话竞争）
 - `/mcp` 曾因 `$MCP_CONFIG；`（变量名紧邻全角分号）在 `set -u` 下触发 unbound-variable 而崩溃，已修（`${MCP_CONFIG}`）
 - `/map` 依赖外部 Nominatim，可能偶发失败（与 Fuyao 无关）
-- GitHub trending cron 任务（抓页 + 建飞书文档 + 发群）在 fuyao-glm 下实测通过，需要 `FUYAO_TIMEOUT=1200`
+- GitHub trending cron 任务（抓页 + 建飞书文档 + 发群）在 fuyao-glm 下实测通过（默认走 opencode harness，需 `FUYAO_TIMEOUT=1200`；长任务可用 `/timeout 1200` 或 `BOT_TIMEOUT=1200` 放宽运行超时）
 - 如某节在 Fuyao 下失败，记录到该节状态列并在「已知限制」中注明
 
 ---
@@ -79,7 +79,12 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 1.10 | `/quota` | 显示配额数字 + 模型名 + 模式（quality/thrifty） | ✅ |
 | 1.11 | `/cancel` (有运行中请求时) | "🛑 已中止当前请求。" | ✅ |
 | 1.12 | `/cancel` (无请求时) | "(没有正在处理的请求)" | ✅ |
-| 1.13 | `/lang en` → `/help` | 英文帮助 | ✅ |
+| 1.13 | `/timeout` | "⏱ 当前会话超时：600s（全局默认 600s）" | ✅ |
+| 1.14 | `/timeout 1200` | "⏱ 本会话超时已设为 1200s。" | ✅ |
+| 1.15 | `/timeout` (设置后) | 显示 1200s | ✅ |
+| 1.16 | `/timeout reset` | "⏱ 已重置为全局默认 600s。" | ✅ |
+| 1.17 | `/timeout 10` | "用法：/timeout <秒数≥30> | /timeout reset"（拒绝过小值） | ✅ |
+| 1.18 | `/lang en` → `/help` | 英文帮助 | ✅ |
 
 ### 2. 会话管理
 
