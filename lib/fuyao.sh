@@ -6,7 +6,7 @@
 
 FUYAO_API_KEY="${FUYAO_API_KEY:-0e67604fbf554ba7b5727d875af13c13}"
 FUYAO_BASE_URL="${FUYAO_BASE_URL:-https://fuyao-ai-gateway.xiaopeng.link/v1}"
-FUYAO_DIRECT="${FUYAO_DIRECT:-1}"
+FUYAO_DIRECT="${FUYAO_DIRECT:-0}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
 FUYAO_TIMEOUT="${FUYAO_TIMEOUT:-120}"
 
@@ -110,6 +110,11 @@ ENDJSON
     end
   ' < "$raw_out" 2>/dev/null)
   rm -f "$raw_out"
+
+  # Strip reasoning/thinking tags leaked by reasoning models
+  if [[ "$text" == *"</think>"* ]]; then
+    text="${text##*</think>}"
+  fi
 
   # Trim whitespace
   text="${text#"${text%%[![:space:]]*}"}"
