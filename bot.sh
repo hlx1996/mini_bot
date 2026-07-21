@@ -1151,10 +1151,19 @@ intent_shortcut() {
   local t="$1" lt
   lt=$(printf '%s' "$t" | tr '[:upper:]' '[:lower:]')
   # 图片生成
-  if [[ "$t" =~ (画一?张|生成图片|来张图|draw[[:space:]]+(me[[:space:]]+)?a|generate[[:space:]]+an?[[:space:]]+image) ]]; then
-    # Strip leading verb
-    local p="${t#*画}"; p="${p#一张}"; p="${p#张}"
-    [[ "$p" == "$t" ]] && p="$t"
+  if [[ "$t" =~ (画一?[张个幅]|生成.{0,20}图[片]?|来[张个幅]图|draw[[:space:]]+(me[[:space:]]+)?a|generate[[:space:]]+an?[[:space:]]+image) ]]; then
+    # Strip leading verb + measure word, keep the prompt
+    local p="$t"
+    p=$(printf '%s' "$p" | sed -E 's/^(画一?[张个幅]|生成|来[张个幅])//')
+    p="${p#一张}"; p="${p#一个}"; p="${p#幅}"
+    # Strip leading "图片/图" + optional punctuation
+    p=$(printf '%s' "$p" | sed -E 's/^的?[一]?[张个幅]?图[片]?[：:，, ]*//')
+    # Strip trailing action clauses (发到/发送到/然后发…)
+    p=$(printf '%s' "$p" | sed -E 's/[，,]?(发到|发送到|然后发).*//')
+    # Trim whitespace
+    p="${p#"${p%%[![:space:]]*}"}"
+    p="${p%"${p##*[![:space:]]}"}"
+    [[ -z "$p" ]] && p="$t"
     echo "/image $p"; return 0
   fi
   # 联网搜索
