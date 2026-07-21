@@ -85,6 +85,7 @@ bash bot.sh run
 | `/remember 我的生日是 5/1` | 长期记忆 |
 | `/memory` / `/forget` | 看 / 清记忆 |
 | `/stream on` | 实时推送『🤔 思考中 / 🔧 调用工具』进度（默认 off） |
+| `/timeout 1200` | 设置本会话运行超时秒数（默认 600） |
 | `/url off` | 消息含网址时关闭自动抓正文（默认 on） |
 | `/route add 代码\|debug claude-sonnet` | 关键词命中时临时换模型；首匹配生效 |
 | `/cost week` | 看本周 token / 估算费用（按模型分组） |
@@ -447,7 +448,7 @@ opencode models fuyao            # 应列出 fuyao-deepseek / fuyao-glm / fuyao-
 opencode run -m "fuyao/fuyao-kimi" "say hi"   # 应返回 Hi
 ```
 
-**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型默认走直连模式（curl 直调网关，秒回）。设置 `FUYAO_DIRECT=0` 可回退到 opencode harness（具备文件、Shell、搜索等 agent 能力）。
+**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型默认走 opencode harness（具备文件、Shell、搜索等 agent 能力）。设置 `FUYAO_DIRECT=1` 可切到直连模式（curl 直调网关，秒回，但无工具能力）。
 
 ### API Server（OpenAI-compatible 代理模式）
 
@@ -673,7 +674,8 @@ lark:lark_main      cat         qoder-cli
 | `BOT_PLUGIN_LAZY` | `0` 关闭插件懒加载，启动即 source 全部（默认 1） |
 | `BOT_API_SERVER` | `1` 启动 OpenAI-compatible API Server（默认关闭） |
 | `BOT_API_PORT` | API Server 端口（默认 9877） |
-| `FUYAO_DIRECT` | `1` Fuyao 模型直连网关，`0` 走 opencode harness（默认 1） |
+| `BOT_TIMEOUT` | 单次请求运行超时秒数（默认 600），可用 `/timeout` 按会话覆盖 |
+| `FUYAO_DIRECT` | `1` Fuyao 模型直连网关，`0` 走 opencode harness（默认 0） |
 | `FUYAO_API_KEY` | Fuyao 网关 API Key |
 | `FUYAO_BASE_URL` | Fuyao 网关地址（默认 `https://fuyao-ai-gateway.xiaopeng.link/v1`） |
 | `FUYAO_TIMEOUT` | Fuyao 调用超时秒数（默认 120） |
