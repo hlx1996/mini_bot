@@ -88,6 +88,7 @@ emit_event() {
 }
 
 BOT_MODEL_DEFAULT="${BOT_MODEL:-lite}"
+BOT_TIMEOUT="${BOT_TIMEOUT:-600}"
 QODER_BIN="${QODER_BIN:-qodercli}"
 WXLINK_BIN="${WXLINK_BIN:-$SCRIPT_DIR/wxlink.py}"
 [[ -f "$WXLINK_BIN" ]] || WXLINK_BIN="$HOME/wxlink.py"
@@ -290,6 +291,8 @@ run_qoder_agent() {
   if (( resuming )); then
     if [[ $rc -eq 0 ]] && (( _qa_blank )); then _qa_need_heal=1; fi
     if [[ $rc -ne 0 ]]; then _qa_need_heal=2; fi
+  else
+    if [[ $rc -ne 0 ]]; then _qa_need_heal=3; fi
   fi
   if (( _qa_need_heal )); then
     log "qoder SELF-HEAL (reason=$_qa_need_heal) uuid=$session_uuid — summarizing, resetting, retrying fresh"
@@ -337,6 +340,7 @@ run_with_heartbeat() {
   echo "$qpid" > "$lock_file"
 
   local elapsed=0 next_beat=25
+  local _hb_timeout; _hb_timeout=$(timeout_for_key "$key")
   while kill -0 "$qpid" 2>/dev/null; do
     sleep 1
     elapsed=$((elapsed+1))
@@ -352,8 +356,8 @@ run_with_heartbeat() {
         next_beat=$((next_beat+60))
       fi
     fi
-    if (( elapsed > 600 )); then
-      log "qoder timed out, killing pid $qpid"
+    if (( elapsed > _hb_timeout )); then
+      log "qoder timed out after ${_hb_timeout}s, killing pid $qpid"
       kill "$qpid" 2>/dev/null
       sleep 1; kill -9 "$qpid" 2>/dev/null
       break
@@ -438,11 +442,12 @@ run_with_streaming() {
   echo "$qpid" > "$lock_file"
 
   local elapsed=0
+  local _st_timeout; _st_timeout=$(timeout_for_key "$key")
   while kill -0 "$qpid" 2>/dev/null; do
     sleep 5
     elapsed=$((elapsed+5))
-    if (( elapsed > 600 )); then
-      log "qoder STREAM timed out, killing pid $qpid"
+    if (( elapsed > _st_timeout )); then
+      log "qoder STREAM timed out after ${_st_timeout}s, killing pid $qpid"
       kill "$qpid" 2>/dev/null
       sleep 1; kill -9 "$qpid" 2>/dev/null
       break
@@ -469,6 +474,8 @@ run_with_streaming() {
   if (( resuming )); then
     if [[ $rc -eq 0 ]] && (( _st_blank )); then _st_need_heal=1; fi
     if [[ $rc -ne 0 ]]; then _st_need_heal=2; fi
+  else
+    if [[ $rc -ne 0 ]]; then _st_need_heal=3; fi
   fi
   if (( _st_need_heal )); then
     log "qoder STREAM SELF-HEAL (reason=$_st_need_heal) uuid=$session_uuid — summarizing, resetting, retrying fresh"
@@ -802,6 +809,15 @@ is_admin()      { is_listed "$ADMINS_FILE" "$1"; }
 is_muted_key()  { is_listed "$MUTE_FILE" "$1"; }
 whitelist_active() { [[ -s "$WHITELIST_FILE" ]]; }
 in_whitelist()  { is_listed "$WHITELIST_FILE" "$1"; }
+
+# ---------- per-session timeout ----------
+
+timeout_for_key() {
+  local key="$1" f="$SESS_DIR/$1.timeout"
+  if [[ -s "$f" ]]; then cat "$f"; else echo "$BOT_TIMEOUT"; fi
+}
+
+set_timeout_for_key() { printf '%s' "$2" > "$SESS_DIR/$1.timeout"; }
 
 # ---------- quota ----------
 
@@ -1437,6 +1453,7 @@ handle_command() {
 — Hooks / quotas / governance —
   /hooks
   /quota [show|set <n>|reset]
+  /timeout [N|reset]           per-session run timeout (default ${BOT_TIMEOUT}s)
   /mute | /unmute              silence this chat
   /whitelist [list|add|rm <id>] (admin)
   /admin [list|add|rm <user>]   (admin)
@@ -1557,6 +1574,7 @@ Send any text / image / voice / video / file directly — multi-turn context is 
   /hooks                       查看 hooks 安装情况
   /quota                       查看今日配额（默认 ${QUOTA_DEFAULT}/天）
   /quota set <n>               设置每日配额（0=不限）  *admin*
+  /timeout [N|reset]           设置本会话运行超时（默认 ${BOT_TIMEOUT}s）
   /mute / /unmute              静音本会话（不再自动回复）
   /whitelist add|rm <user>     白名单（仅允许列表内）   *admin*
   /admin add|rm <user>         管理员管理               *admin*
@@ -1947,6 +1965,21 @@ $(bridge_list)
         reply_text "$to" "🔔 已解除静音。"
       else
         reply_text "$to" "(你已静音；请管理员代你 /say 或加白名单解除)"
+      fi
+      return 0 ;;
+
+    /timeout)
+      local _to_arg="${rest%% *}"
+      if [[ -z "$_to_arg" || "$_to_arg" == "show" ]]; then
+        reply_text "$to" "⏱ 当前会话超时：$(timeout_for_key "$key")s（全局默认 ${BOT_TIMEOUT}s）。用法：/timeout <秒数> | /timeout reset"
+      elif [[ "$_to_arg" == "reset" ]]; then
+        rm -f "$SESS_DIR/$key.timeout"
+        reply_text "$to" "⏱ 已重置为全局默认 ${BOT_TIMEOUT}s。"
+      elif [[ "$_to_arg" =~ ^[0-9]+$ ]] && (( _to_arg >= 30 )); then
+        set_timeout_for_key "$key" "$_to_arg"
+        reply_text "$to" "⏱ 本会话超时已设为 ${_to_arg}s。"
+      else
+        reply_text "$to" "用法：/timeout <秒数≥30> | /timeout reset"
       fi
       return 0 ;;
 
