@@ -4,7 +4,10 @@
 # Harness mode: opencode run (full agent with tools — file read/write, shell, web search).
 # Env: FUYAO_API_KEY, FUYAO_BASE_URL, FUYAO_DIRECT (default 1), OPENCODE_BIN, FUYAO_TIMEOUT
 
-FUYAO_API_KEY="${FUYAO_API_KEY:-<FUYAO_API_KEY>}"
+# No baked-in credentials — both come from .env or the environment. Copy
+# .env.example to .env and fill these in; a missing key fails loudly rather than
+# silently using someone else's quota.
+FUYAO_API_KEY="${FUYAO_API_KEY:-}"
 FUYAO_BASE_URL="${FUYAO_BASE_URL:-https://your-fuyao-gateway.example.com/v1}"
 FUYAO_DIRECT="${FUYAO_DIRECT:-0}"
 OPENCODE_BIN="${OPENCODE_BIN:-opencode}"
@@ -23,6 +26,15 @@ _oc_model_file() { echo "$SESS_DIR/$1.oc_model"; }
 run_fuyao_direct() {
   local prompt="$1" key="$2" workspace="$3" model="$4"
   shift 4
+
+  # Map "fuyao-coding-low/-high/-max" → upstream "fuyao-coding" + reasoning_effort
+  local upstream_model="$model"
+  local effort=""
+  case "$model" in
+    *-low)  upstream_model="${model%-low}";  effort="low" ;;
+    *-high) upstream_model="${model%-high}"; effort="high" ;;
+    *-max)  upstream_model="${model%-max}";  effort="max" ;;
+  esac
 
   local sys_prompt
   local soul_name mem gmem
@@ -57,21 +69,24 @@ run_fuyao_direct() {
     prompt_escaped=$(python3 -c "import json; a=json.loads($prompt_escaped); b=json.loads($extra_escaped); print(json.dumps(a+b))")
   fi
 
+  local effort_json=""
+  [[ -n "$effort" ]] && effort_json=$',\n  "reasoning_effort": "'"$effort"'"'
+
   local body
   body=$(cat <<ENDJSON
 {
-  "model": "$model",
+  "model": "$upstream_model",
   "messages": [
     {"role": "system", "content": $sys_escaped},
     {"role": "user", "content": $prompt_escaped}
   ],
   "stream": false,
-  "max_tokens": 4096
+  "max_tokens": 4096$effort_json
 }
 ENDJSON
 )
 
-  log "fuyao DIRECT model=$model prompt=${prompt:0:60}..."
+  log "fuyao DIRECT model=$model upstream=$upstream_model effort=${effort:-none} prompt=${prompt:0:60}..."
 
   local raw_out; raw_out=$(mktemp -t fuyao_direct.XXXXXX)
   local http_code
@@ -132,6 +147,20 @@ ENDJSON
   printf '%s' "$text"
 }
 
+# _kill_tree <pid> — TERM then KILL a process and its direct children.
+# opencode run spawns tool subprocesses; a bare `kill` leaves them reparented.
+_kill_tree() {
+  local pid="$1" child
+  [[ -z "$pid" ]] && return 0
+  for child in $(pgrep -P "$pid" 2>/dev/null); do
+    _kill_tree "$child"
+  done
+  kill -TERM "$pid" 2>/dev/null
+  sleep 1
+  kill -KILL "$pid" 2>/dev/null
+  return 0
+}
+
 # run_opencode_agent <prompt> <key> <workspace> <model> [attachments...]
 # Mirrors run_qoder_agent but uses opencode as the harness.
 run_opencode_agent() {
@@ -158,8 +187,10 @@ run_opencode_agent() {
   # Write AGENTS.md into workspace so opencode picks up the system prompt
   printf '# agent\n\n## system\n%s\n' "$sys_prompt" > "$workspace/AGENTS.md"
 
-  local args=( run -m "fuyao/$model" --dangerously-skip-permissions
-               --dir "$workspace" --format json )
+  # opencode >=2 dropped `run --dir`; the workspace is set by cd'ing the subshell
+  # that launches it. `exec` keeps $! pointing at opencode itself, so _kill_tree
+  # and bot.sh's heartbeat kill still address the real process.
+  local args=( run -m "fuyao/$model" --dangerously-skip-permissions --format json )
 
   # IMPORTANT: prompt positional must come BEFORE `-f` flags. opencode's yargs
   # parser greedily absorbs every positional after `-f` as a file path, so
@@ -181,40 +212,62 @@ run_opencode_agent() {
   fi
 
   local raw_out; raw_out=$(mktemp -t oc_out.XXXXXX)
+  local raw_err; raw_err=$(mktemp -t oc_err.XXXXXX)
 
-  # Run with timeout
-  "$OPENCODE_BIN" "${args[@]}" >"$raw_out" 2>>"$LOG_DIR/opencode.err" &
+  # Use per-session timeout if set (via /timeout), else FUYAO_TIMEOUT
+  local _oc_timeout="$FUYAO_TIMEOUT"
+  if [[ -s "$SESS_DIR/$key.timeout" ]]; then
+    _oc_timeout=$(cat "$SESS_DIR/$key.timeout")
+  fi
+
+  # Run with timeout. stderr is captured per-run (not appended straight to the
+  # shared log) so a failure can be reported back instead of silently surfacing
+  # as an empty reply.
+  ( cd "$workspace" && exec "$OPENCODE_BIN" "${args[@]}" ) \
+    </dev/null >"$raw_out" 2>"$raw_err" &
   local oc_pid=$!
+  # PID file contract: bot.sh reap_stale_runs() & heartbeat kill read this to
+  # kill the opencode tree when this shell is dead (orphan prevention).
+  printf '%s' "$oc_pid" > "$SESS_DIR/$key.oc_pid"
   local elapsed=0
   while kill -0 "$oc_pid" 2>/dev/null; do
     sleep 1
     elapsed=$((elapsed + 1))
-    if (( elapsed > FUYAO_TIMEOUT )); then
-      log "opencode TIMEOUT after ${FUYAO_TIMEOUT}s, killing pid $oc_pid"
-      kill "$oc_pid" 2>/dev/null
-      sleep 1; kill -9 "$oc_pid" 2>/dev/null
+    if (( elapsed > _oc_timeout )); then
+      log "opencode TIMEOUT after ${_oc_timeout}s, killing pid $oc_pid"
+      _kill_tree "$oc_pid"
       break
     fi
   done
   wait "$oc_pid" 2>/dev/null
   local rc=$?
+  rm -f "$SESS_DIR/$key.oc_pid"
+  [[ -s "$raw_err" ]] && cat "$raw_err" >> "$LOG_DIR/opencode.err"
 
-  # Check for error events in output
+  # Check for error events in output (opencode >=2 nests the text at .error.message)
   local err_msg
-  err_msg=$(jq -r 'select(.type=="error") | .error.data.message // .error.name // empty' < "$raw_out" 2>/dev/null | head -1)
+  err_msg=$(jq -r 'select(.type=="error") | .error.message // .error.data.message // .error.type // empty' < "$raw_out" 2>/dev/null | head -1)
   if [[ -n "$err_msg" ]]; then
     log "opencode ERROR model=$model: $err_msg"
-    rm -f "$raw_out"
+    rm -f "$raw_out" "$raw_err"
+    # Context overflow → session is unusable, reset so next call starts fresh
+    if [[ "$err_msg" == *"maximum context length"* || "$err_msg" == *"token"* ]]; then
+      rm -f "$oc_sf" "$started_marker"
+      log "opencode session reset due to context overflow"
+    fi
     echo "(模型调用失败: $err_msg)"
     return 1
   fi
 
-  if [[ $rc -eq 0 ]]; then
+  # Capture the session ID whenever opencode created one, and mark the session
+  # started if the run exited clean or at least produced a session. Gating both
+  # on rc==0 would drop multi-turn continuity for runs that return valid text
+  # but exit non-zero (rc used to be misread as 0 here, so this was never hit).
+  local sid
+  sid=$(head -1 "$raw_out" | jq -r '.sessionID // empty' 2>/dev/null)
+  [[ -n "$sid" ]] && printf '%s' "$sid" > "$oc_sf"
+  if [[ $rc -eq 0 || -n "$sid" ]]; then
     touch "$started_marker"
-    # Capture session ID from first JSON event (for future resume)
-    local sid
-    sid=$(head -1 "$raw_out" | jq -r '.sessionID // empty' 2>/dev/null)
-    [[ -n "$sid" ]] && printf '%s' "$sid" > "$oc_sf"
   fi
 
   # Extract text content from JSON events (preserve newlines between parts)
@@ -225,17 +278,41 @@ run_opencode_agent() {
   rm -f "$raw_out"
 
   if [[ -z "$text" ]]; then
-    if (( elapsed > FUYAO_TIMEOUT )); then
+    if (( elapsed > _oc_timeout )); then
+      rm -f "$raw_err"
       echo "(模型响应超时，请稍后重试或切换模型)"
     else
-      log "opencode returned empty (rc=$rc)"
-      # Session might be corrupted, clear it for next attempt
-      rm -f "$oc_sf" "$started_marker"
-      echo "(opencode 没有返回内容，已重置会话，请重试)"
+      # Flag-parse errors and DB locks only ever reach stderr — they never arrive
+      # as a JSON `error` event, so without this the real cause stays invisible
+      # and every such failure looks like a plain empty reply.
+      local reason
+      reason=$(tail -3 "$raw_err" 2>/dev/null | tr -s '[:space:]' ' ')
+      reason="${reason#"${reason%%[![:space:]]*}"}"
+      reason="${reason%"${reason##*[![:space:]]}"}"
+      rm -f "$raw_err"
+      log "opencode returned empty (rc=$rc elapsed=${elapsed}s): ${reason:-<no stderr>}"
+      # A transient SQLite lock fails the write cleanly and leaves the session
+      # intact, so wiping it here would throw away the user's whole conversation
+      # over an infrastructure blip. Only reset for genuinely unexplained empties.
+      case "$reason" in
+        *"database is locked"*|*"SQLITE_BUSY"*)
+          log "opencode transient failure; keeping session ${oc_session:-<none>}"
+          echo "(opencode 暂时不可用: ${reason:0:200})"
+          ;;
+        *)
+          rm -f "$oc_sf" "$started_marker"
+          if [[ -n "$reason" ]]; then
+            echo "(opencode 调用失败: ${reason:0:200})"
+          else
+            echo "(opencode 没有返回内容，已重置会话，请重试)"
+          fi
+          ;;
+      esac
     fi
     return 1
   fi
 
+  rm -f "$raw_err"
   log "opencode OK model=$model chars=${#text}"
   printf '%s' "$text"
 }

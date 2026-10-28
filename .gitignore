@@ -30,3 +30,7 @@ state/contacts.tsv
 state/watchdog.pid
 .omo/
 AGENTS.md
+# 个人自动化脚本：含私人群 ID 与本机绝对路径，不随仓库发布
+scripts/sequoia-*.sh
+# 公司内部系统审批自动化：含内网主机名、项目路径与在职员工姓名
+skills/

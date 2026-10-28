@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # mini_bot watchdog — respawns bot.sh on crash, idempotent on repeated runs.
-REPO_DIR="/path/to/mini_bot"
-STATE_DIR="/path/to/mini_bot/state"
-LOG_DIR="/path/to/mini_bot/state/logs"
-PID_FILE="/path/to/mini_bot/state/watchdog.pid"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="${BOT_HOME:-$REPO_DIR/state}"
+LOG_DIR="$STATE_DIR/logs"
+PID_FILE="$STATE_DIR/watchdog.pid"
 mkdir -p "$LOG_DIR"
 # already running?
 if [[ -f "$PID_FILE" ]] && kill -0 "$(cat "$PID_FILE")" 2>/dev/null; then

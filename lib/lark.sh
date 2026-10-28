@@ -68,6 +68,35 @@ lark_reply_card() {
     --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err" >/dev/null
 }
 
+# lark_send_card_json <to> <card_json> — 主动发送 interactive 卡片（oc_/ou_ 新消息；om_ 回复）
+lark_send_card_json() {
+  local to="$1" card="$2"
+  local as; as=$(lark_as_for "${G_ACCOUNT_NAME:-default}")
+  # 裸 API reply（om_）需要 {msg_type, content:字符串} 信封；
+  # +messages-send（oc_/ou_）的 --content 直接就是卡片 JSON 本体，勿再包信封。
+  local data
+  data=$(jq -nc --argjson c "$card" '{msg_type:"interactive", content:($c|tojson)}')
+  case "$to" in
+    om_*)
+      lark-cli api POST "/open-apis/im/v1/messages/$to/reply" \
+        --data "$data" --as "$as" 2>>"$LOG_DIR/reply.err" >/dev/null
+      ;;
+    oc_*)
+      lark-cli im +messages-send --as "$as" --chat-id "$to" \
+        --content "$card" --msg-type interactive \
+        2>>"$LOG_DIR/reply.err" >/dev/null
+      ;;
+    ou_*)
+      lark-cli im +messages-send --as "$as" --user-id "$to" \
+        --content "$card" --msg-type interactive \
+        2>>"$LOG_DIR/reply.err" >/dev/null
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 lark_reply_media() {
   local message_id="$1" file="$2"
   # User identity often lacks im:resource:upload; bot identity has it.

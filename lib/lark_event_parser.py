@@ -10,6 +10,60 @@ import subprocess
 import traceback
 
 
+def fetch_parent(parent_id, msg_id, dl_dir, as_id):
+    """Fetch quoted parent message content via Lark API."""
+    try:
+        r = subprocess.run(
+            ["lark-cli", "api", "GET",
+             f"/open-apis/im/v1/messages/{parent_id}", "--as", as_id],
+            capture_output=True, text=True, timeout=15,
+        )
+        if r.returncode != 0:
+            return "", []
+        data = json.loads(r.stdout)
+        items = (data.get("data") or {}).get("items") or []
+        if not items:
+            return "", []
+        pmsg = items[0]
+        ptype = pmsg.get("msg_type", "")
+        praw = pmsg.get("body", {}).get("content") or pmsg.get("content") or "{}"
+        try:
+            pcontent = json.loads(praw)
+        except Exception:
+            pcontent = {}
+        ptext = ""
+        pmedia = []
+        if ptype == "text":
+            ptext = pcontent.get("text", "") or ""
+        elif ptype == "post":
+            title = pcontent.get("title", "") or ""
+            texts = []
+            for row in pcontent.get("content", []) or []:
+                for el in row or []:
+                    if isinstance(el, dict) and el.get("tag") == "text":
+                        texts.append(el.get("text", "") or "")
+            ptext = "\n".join([t for t in [title] + texts if t])
+        elif ptype == "image":
+            ikey = pcontent.get("image_key")
+            if ikey:
+                fpath = os.path.join(dl_dir, ikey + ".jpg")
+                if not os.path.exists(fpath):
+                    subprocess.run(
+                        ["lark-cli", "im", "+messages-resources-download",
+                         "--message-id", parent_id,
+                         "--file-key", ikey, "--type", "image",
+                         "--output", os.path.basename(fpath), "--as", as_id],
+                        cwd=dl_dir, check=False,
+                        stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                        timeout=30,
+                    )
+                if os.path.exists(fpath):
+                    pmedia.append({"kind": "image", "path": fpath})
+        return ptext, pmedia
+    except Exception:
+        return "", []
+
+
 def process(line, acct, dl_dir, as_id):
     try:
         ev = json.loads(line)
@@ -80,6 +134,13 @@ def process(line, acct, dl_dir, as_id):
     else:
         return
 
+    # Fetch quoted/referenced parent message if present
+    parent_id = msg.get("parent_id") or ""
+    quoted_text = ""
+    quoted_media = []
+    if parent_id:
+        quoted_text, quoted_media = fetch_parent(parent_id, msg.get("message_id", ""), dl_dir, as_id)
+
     mentions = msg.get("mentions") or ev.get("event", {}).get("mentions") or []
     out = {
         "type": "message",
@@ -93,8 +154,9 @@ def process(line, acct, dl_dir, as_id):
         "account_name": acct,
         "text": text,
         "mentioned": bool(mentions),
-        "media": media,
+        "media": media + quoted_media,
         "reply_to": msg.get("message_id", ""),
+        "quoted_text": quoted_text,
     }
     try:
         sys.stdout.write(json.dumps(out, ensure_ascii=False) + "\n")

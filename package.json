@@ -23,6 +23,7 @@
   },
   "homepage": "https://github.com/hlx1996/mini_bot#readme",
   "dependencies": {
-    "playwright": "^1.60.0"
+    "playwright": "^1.60.0",
+    "ws": "^8.21.1"
   }
 }

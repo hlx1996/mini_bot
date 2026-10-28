@@ -152,10 +152,10 @@ write_watchdog() {
   cat > "$WATCHDOG" <<WD
 #!/usr/bin/env bash
 # mini_bot watchdog — respawns bot.sh on crash, idempotent on repeated runs.
-REPO_DIR="$REPO_DIR"
-STATE_DIR="$STATE_DIR"
-LOG_DIR="$LOG_DIR"
-PID_FILE="$WATCHDOG_PIDFILE"
+REPO_DIR="\$(cd "\$(dirname "\${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="\${BOT_HOME:-\$REPO_DIR/state}"
+LOG_DIR="\$STATE_DIR/logs"
+PID_FILE="\$STATE_DIR/watchdog.pid"
 mkdir -p "\$LOG_DIR"
 # already running?
 if [[ -f "\$PID_FILE" ]] && kill -0 "\$(cat "\$PID_FILE")" 2>/dev/null; then

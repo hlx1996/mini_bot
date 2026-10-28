@@ -430,9 +430,54 @@ curl -fsSL https://opencode.ai/install | bash
         "baseURL": "https://your-fuyao-gateway.example.com/v1"
       },
       "models": {
-        "fuyao-deepseek": {},
-        "fuyao-glm": {},
-        "fuyao-kimi": {}
+        "fuyao-coding-low": {
+          "id": "fuyao-coding",
+          "name": "Fuyao Coding (low)",
+          "reasoning": true,
+          "limit": { "context": 1000000, "output": 65536 },
+          "options": { "reasoningEffort": "low" }
+        },
+        "fuyao-coding-high": {
+          "id": "fuyao-coding",
+          "name": "Fuyao Coding (high)",
+          "reasoning": true,
+          "limit": { "context": 1000000, "output": 65536 },
+          "options": { "reasoningEffort": "high" }
+        },
+        "fuyao-coding-max": {
+          "id": "fuyao-coding",
+          "name": "Fuyao Coding (max)",
+          "reasoning": true,
+          "limit": { "context": 1000000, "output": 65536 },
+          "options": { "reasoningEffort": "max" }
+        },
+        "fuyao-work-low": {
+          "id": "fuyao-work",
+          "name": "Fuyao Work (low)",
+          "reasoning": true,
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] },
+          "limit": { "context": 256000, "output": 65536 },
+          "options": { "reasoningEffort": "low" }
+        },
+        "fuyao-work-high": {
+          "id": "fuyao-work",
+          "name": "Fuyao Work (high)",
+          "reasoning": true,
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] },
+          "limit": { "context": 256000, "output": 65536 },
+          "options": { "reasoningEffort": "high" }
+        },
+        "fuyao-work-max": {
+          "id": "fuyao-work",
+          "name": "Fuyao Work (max)",
+          "reasoning": true,
+          "attachment": true,
+          "modalities": { "input": ["text", "image"] },
+          "limit": { "context": 256000, "output": 65536 },
+          "options": { "reasoningEffort": "max" }
+        }
       }
     }
   }
@@ -444,11 +489,11 @@ curl -fsSL https://opencode.ai/install | bash
 **验证安装：**
 
 ```bash
-opencode models fuyao            # 应列出 fuyao-deepseek / fuyao-glm / fuyao-kimi
-opencode run -m "fuyao/fuyao-kimi" "say hi"   # 应返回 Hi
+opencode models fuyao            # 应列出 fuyao-coding-{low,high,max} / fuyao-work-{low,high,max}
+opencode run -m "fuyao/fuyao-coding-high" "say hi"   # 应返回 Hi
 ```
 
-**使用：** 聊天里发 `/model select`，选 15/16/17 切换。Fuyao 模型默认走 opencode harness（具备文件、Shell、搜索等 agent 能力）。设置 `FUYAO_DIRECT=1` 可切到直连模式（curl 直调网关，秒回，但无工具能力）。
+**使用：** 聊天里发 `/model select`，选 15–20 切换（coding 和 work 各有 low/high/max 三档）。Fuyao 模型默认走 opencode harness（具备文件、Shell、搜索等 agent 能力）。设置 `FUYAO_DIRECT=1` 可切到直连模式（curl 直调网关，秒回，但无工具能力）。
 
 ### API Server（OpenAI-compatible 代理模式）
 
@@ -483,7 +528,7 @@ node lib/api_server.js
 | `GET /v1/models` | 列出所有可用模型 |
 | `GET /health` | 健康检查 |
 
-**模型名称：** 直接传 mini_bot 的模型 ID（如 `fuyao-deepseek`、`lite`、`ultimate`），或带 `mb-` 前缀（如 `mb-fuyao-deepseek`，自动去掉前缀）。
+**模型名称：** 直接传 mini_bot 的模型 ID（如 `fuyao-coding-high`、`lite`、`ultimate`），或带 `mb-` 前缀（如 `mb-fuyao-coding-high`，自动去掉前缀）。
 
 **在 opencode 中使用：**
 
@@ -494,8 +539,10 @@ node lib/api_server.js
       "npm": "@ai-sdk/openai-compatible",
       "options": { "apiKey": "local", "baseURL": "http://localhost:9877/v1" },
       "models": {
-        "mb-fuyao-deepseek": { "name": "MB-Fuyao-DeepSeek" },
-        "mb-fuyao-glm": { "name": "MB-Fuyao-GLM" },
+        "mb-fuyao-coding-high": { "name": "MB-Fuyao-Coding-High" },
+        "mb-fuyao-coding-max": { "name": "MB-Fuyao-Coding-Max" },
+        "mb-fuyao-work-high": { "name": "MB-Fuyao-Work-High" },
+        "mb-fuyao-work-max": { "name": "MB-Fuyao-Work-Max" },
         "mb-lite": { "name": "MB-Lite" }
       }
     }
@@ -503,7 +550,7 @@ node lib/api_server.js
 }
 ```
 
-然后在 opencode 中选 `mb/mb-fuyao-deepseek` 即可直连。详见 [mini_bot_client](../mini_bot_client) 项目获取完整的智能路由方案（内网直连 / 外网自动走飞书通道）。
+然后在 opencode 中选 `mb/mb-fuyao-coding-high` 即可直连。详见 [mini_bot_client](../mini_bot_client) 项目获取完整的智能路由方案（内网直连 / 外网自动走飞书通道）。
 
 ### 加密保存对话/记忆
 
@@ -695,3 +742,85 @@ CI 见 `.github/workflows/ci.yml`，每次 push 自动跑。
 ## 10. License
 
 MIT
+--
+
+## 10. License
+
+MIT
+T
+RT` | qoder 推理强度 `low\|medium\|high`（默认 medium，快速路径用 low） |
+| `BOT_MAX_OUTPUT_TOKENS` | 单轮回复 token 上限（默认根据消息长度 1500 / 4000 自适应） |
+| `BOT_FASTPATH_MAXLEN` | 短消息走 fast-path 的字符阈值（默认 80） |
+| `BOT_MCP_LAZY` | `0` 关闭 lazy MCP，始终挂 `--mcp-config`（默认 1） |
+| `BOT_INJECT_MAX` | 单轮注入上下文（RAG+pin+URL+hooks）总字符上限（默认 4000） |
+| `BOT_REPLY_CACHE` / `BOT_REPLY_CACHE_TTL` / `BOT_REPLY_CACHE_MAXLEN` | 短消息回复缓存开关 / TTL 秒 / 命中长度上限 |
+| `BOT_AUTO_COMPRESS` / `BOT_COMPRESS_AT` | 长会话自动压缩开关 / 触发阈值（默认 120000 字符） |
+| `BOT_AUTOMEM_MINLEN` / `BOT_AUTOMEM_EVERY` | `/automem` 抽取的长度门槛 / 频率（默认 80 字、每 5 轮） |
+| `BOT_PLUGIN_LAZY` | `0` 关闭插件懒加载，启动即 source 全部（默认 1） |
+| `BOT_API_SERVER` | `1` 启动 OpenAI-compatible API Server（默认关闭） |
+| `BOT_API_PORT` | API Server 端口（默认 9877） |
+| `BOT_TIMEOUT` | 单次请求运行超时秒数（默认 600），可用 `/timeout` 按会话覆盖 |
+| `FUYAO_DIRECT` | `1` Fuyao 模型直连网关，`0` 走 opencode harness（默认 0） |
+| `FUYAO_API_KEY` | Fuyao 网关 API Key |
+| `FUYAO_BASE_URL` | Fuyao 网关地址（默认 `https://your-fuyao-gateway.example.com/v1`） |
+| `FUYAO_TIMEOUT` | Fuyao 调用超时秒数（默认 120） |
+
+---
+
+## 9. 测试
+
+```bash
+bash live-smoke.sh    # 期望 PASS: 28  FAIL: 0
+```
+
+CI 见 `.github/workflows/ci.yml`，每次 push 自动跑。
+
+---
+
+## 10. License
+
+MIT
+--
+
+## 10. License
+
+MIT
+T
+ium\|high`（默认 medium，快速路径用 low） |
+| `BOT_MAX_OUTPUT_TOKENS` | 单轮回复 token 上限（默认根据消息长度 1500 / 4000 自适应） |
+| `BOT_FASTPATH_MAXLEN` | 短消息走 fast-path 的字符阈值（默认 80） |
+| `BOT_MCP_LAZY` | `0` 关闭 lazy MCP，始终挂 `--mcp-config`（默认 1） |
+| `BOT_INJECT_MAX` | 单轮注入上下文（RAG+pin+URL+hooks）总字符上限（默认 4000） |
+| `BOT_REPLY_CACHE` / `BOT_REPLY_CACHE_TTL` / `BOT_REPLY_CACHE_MAXLEN` | 短消息回复缓存开关 / TTL 秒 / 命中长度上限 |
+| `BOT_AUTO_COMPRESS` / `BOT_COMPRESS_AT` | 长会话自动压缩开关 / 触发阈值（默认 120000 字符） |
+| `BOT_AUTOMEM_MINLEN` / `BOT_AUTOMEM_EVERY` | `/automem` 抽取的长度门槛 / 频率（默认 80 字、每 5 轮） |
+| `BOT_PLUGIN_LAZY` | `0` 关闭插件懒加载，启动即 source 全部（默认 1） |
+| `BOT_API_SERVER` | `1` 启动 OpenAI-compatible API Server（默认关闭） |
+| `BOT_API_PORT` | API Server 端口（默认 9877） |
+| `BOT_TIMEOUT` | 单次请求运行超时秒数（默认 600），可用 `/timeout` 按会话覆盖 |
+| `FUYAO_DIRECT` | `1` Fuyao 模型直连网关，`0` 走 opencode harness（默认 0） |
+| `FUYAO_API_KEY` | Fuyao 网关 API Key |
+| `FUYAO_BASE_URL` | Fuyao 网关地址（默认 `https://your-fuyao-gateway.example.com/v1`） |
+| `FUYAO_TIMEOUT` | Fuyao 调用超时秒数（默认 120） |
+
+---
+
+## 9. 测试
+
+```bash
+bash live-smoke.sh    # 期望 PASS: 28  FAIL: 0
+```
+
+CI 见 `.github/workflows/ci.yml`，每次 push 自动跑。
+
+---
+
+## 10. License
+
+MIT
+--
+
+## 10. License
+
+MIT
+T

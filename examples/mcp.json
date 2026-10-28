@@ -5,7 +5,7 @@
     "filesystem": {
       "_comment": "Read/write files under a single root dir. npx pulls @modelcontextprotocol/server-filesystem on first run.",
       "command": "npx",
-      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/home"]
+      "args": ["-y", "@modelcontextprotocol/server-filesystem", "/path/to/allowed/root"]
     },
 
     "fetch": {
@@ -23,7 +23,7 @@
     "sqlite": {
       "_comment": "Query a local SQLite DB.",
       "command": "uvx",
-      "args": ["mcp-server-sqlite", "--db-path", "/path/to/home/notes.db"]
+      "args": ["mcp-server-sqlite", "--db-path", "/path/to/notes.db"]
     },
 
     "memory": {

@@ -40,7 +40,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 
 ```bash
 # 1. 切到目标模型
-/model select   # 选 15(fuyao-deepseek) / 16(fuyao-glm) / 17(fuyao-kimi) 等
+/model select   # 选 15-20:fuyao-{coding,work}-{low,high,max}
 
 # 2. 按 §1 → §12 顺序跑全部用例
 #    每节之间留足时间等回复（Fuyao 模型响应较慢，建议每节间隔 30-60s）
@@ -56,7 +56,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 - `/run`、`/calc`、`/bg`、`/digest` 等工具类命令：Fuyao 通过 opencode shell 工具执行，结果格式一致（/bg 使用独立的 `${key}.bg` session 避免与主会话竞争）
 - `/mcp` 曾因 `$MCP_CONFIG；`（变量名紧邻全角分号）在 `set -u` 下触发 unbound-variable 而崩溃，已修（`${MCP_CONFIG}`）
 - `/map` 依赖外部 Nominatim，可能偶发失败（与 Fuyao 无关）
-- GitHub trending cron 任务（抓页 + 建飞书文档 + 发群）在 fuyao-glm 下实测通过（默认走 opencode harness，需 `FUYAO_TIMEOUT=1200`；长任务可用 `/timeout 1200` 或 `BOT_TIMEOUT=1200` 放宽运行超时）
+- GitHub trending cron 任务（抓页 + 建飞书文档 + 发群）在 fuyao-work-high 下实测通过（默认走 opencode harness，需 `FUYAO_TIMEOUT=1200`；长任务可用 `/timeout 1200` 或 `BOT_TIMEOUT=1200` 放宽运行超时）
 - 如某节在 Fuyao 下失败，记录到该节状态列并在「已知限制」中注明
 
 ---
@@ -71,7 +71,7 @@ tail -2 state/logs/events.jsonl | grep '"kind":"reply"' | jq -r '.text'
 | 1.2 | `/reset` | "✅ 已清空本会话记忆" | ✅ |
 | 1.3 | `/status` | 返回 host/qoder/soul/model/quota 信息 | ✅ |
 | 1.4 | `/model` | "当前模型：lite" | ✅ |
-| 1.5 | `/model select` | 显示 17 个模型编号列表 | ✅ |
+| 1.5 | `/model select` | 显示 20 个模型编号列表 | ✅ |
 | 1.6 | (回复数字 `12`) | "✅ 已切换模型为：Qwen3.7-Max (qmodel_latest) [5x credit]" | ✅ |
 | 1.7 | `/model select` → 回复 `99` | "❌ Out of range (1-17)" | ✅ |
 | 1.8 | `/model select` → 回复非数字 | 正常走聊天（不报错） | ✅ |

@@ -217,9 +217,12 @@ _model_select_catalog() {
 12|qmodel_latest|Qwen3.7-Max|5x
 13|performance|Performance|5x
 14|ultimate|Ultimate|10x
-15|fuyao-deepseek|Fuyao-DeepSeek|0x
-16|fuyao-glm|Fuyao-GLM|0x
-17|fuyao-kimi|Fuyao-Kimi|0x
+15|fuyao-coding-low|Fuyao-Coding-Low|0x
+16|fuyao-coding-high|Fuyao-Coding-High|0x
+17|fuyao-coding-max|Fuyao-Coding-Max|0x
+18|fuyao-work-low|Fuyao-Work-Low|0x
+19|fuyao-work-high|Fuyao-Work-High|0x
+20|fuyao-work-max|Fuyao-Work-Max|0x
 CATALOG
 }
 
@@ -236,7 +239,7 @@ _model_select_handle() {
   local n="$text"
   local line; line=$(_model_select_catalog | sed -n "${n}p")
   if [[ -z "$line" ]]; then
-    reply_text "$to" "❌ Out of range (1-17)"
+    reply_text "$to" "❌ Out of range (1-16)"
     return 0
   fi
   local model_id; model_id=$(printf '%s' "$line" | cut -d'|' -f2)

@@ -3,10 +3,17 @@
 # subscriber, /bg runners). Use this between dev restarts to prevent zombies.
 #
 # Usage:  scripts/stop.sh
-#         BOT_HOME=/path/to/mini_bot scripts/stop.sh
+#         BOT_HOME=/path/to/mini_bot/state scripts/stop.sh
+#
+# BOT_HOME means the STATE dir here, same as bot.sh / watchdog.sh /
+# install-service.sh. Process matching must NOT use it: the watchdog exports
+# BOT_HOME=$STATE_DIR, so keying the bot.sh pattern off BOT_HOME silently
+# matched nothing and left every bot process alive while killing the watchdog.
+# The repo path is derived from this script's own location instead.
 
 set -u
-BOT_HOME="${BOT_HOME:-$(cd "$(dirname "$0")/.." && pwd)}"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+STATE_DIR="${BOT_HOME:-$REPO_DIR/state}"
 
 pids=()
 add_match() {
@@ -17,8 +24,10 @@ add_match() {
 }
 
 # Order matters: watchdog first so it doesn't respawn things.
+# The watchdog pattern is deliberately not anchored to $REPO_DIR — README starts
+# it as `./scripts/watchdog.sh`, and missing it would let it respawn the bot.
 add_match "scripts/watchdog\.sh"
-add_match "${BOT_HOME}/bot\.sh"
+add_match "${REPO_DIR}/bot\.sh"
 add_match "wxlink\.py.*subscribe"
 add_match "lark-cli event \+subscribe"
 add_match "lark_event_parser\.py"
@@ -37,6 +46,6 @@ if ((${#pids[@]} > 0)); then
   done
 fi
 
-rm -f "$BOT_HOME/state/watchdog.pid"
+rm -f "$STATE_DIR/watchdog.pid"
 rm -f "$HOME/.lark-cli/locks/subscribe_"*.lock 2>/dev/null || true
 echo "done."

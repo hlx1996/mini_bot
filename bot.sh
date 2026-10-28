@@ -45,6 +45,12 @@ set -uo pipefail
 # Resolve script directory so the default state dir is co-located.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# Load .env here too, not only in watchdog.sh: crontab fires `bot.sh --cron-fire`
+# directly, with no watchdog in front to export the config.
+if [[ -f "$SCRIPT_DIR/.env" ]]; then
+  set -a; . "$SCRIPT_DIR/.env"; set +a
+fi
+
 BOT_HOME="${BOT_HOME:-$SCRIPT_DIR/state}"
 LOG_DIR="${LOG_DIR:-$BOT_HOME/logs}"
 SESS_DIR="$BOT_HOME/sessions"
@@ -148,7 +154,12 @@ wxlink() {
   # Accepts optional leading --account NAME; otherwise uses $G_ACCOUNT_NAME or 'default'.
   local acct="${G_ACCOUNT_NAME:-default}"
   if [[ "${1:-}" == "--account" ]]; then acct="$2"; shift 2; fi
-  WXBOT_HOME="$BOT_HOME" "$PYTHON_BIN" "$WXLINK_BIN" --account "$acct" "$@"
+  # wxlink needs the wechat_clawbot SDK, pinned to a dedicated venv: the SDK is
+  # installed for CPython 3.13 while brew's `python3` may float to newer minors
+  # (3.14 upgrade broke the import and crash-looped the subscriber every 3s).
+  local py="$SCRIPT_DIR/.venv-wxlink/bin/python"
+  [[ -x "$py" ]] || py="$PYTHON_BIN"
+  WXBOT_HOME="$BOT_HOME" "$py" "$WXLINK_BIN" --account "$acct" "$@"
 }
 
 # ---------- Lark/Feishu reply helpers (via lark-cli) ----------
@@ -358,8 +369,15 @@ run_with_heartbeat() {
     fi
     if (( elapsed > _hb_timeout )); then
       log "qoder timed out after ${_hb_timeout}s, killing pid $qpid"
+      # The subshell wraps run_agent which backgrounded the real opencode pid
+      # (recorded in $key.oc_pid); kill it too or it survives as an orphan.
+      local _oc_pid_f="$SESS_DIR/$key.oc_pid" _oc_pid=""
+      [[ -s "$_oc_pid_f" ]] && _oc_pid=$(cat "$_oc_pid_f")
       kill "$qpid" 2>/dev/null
+      [[ -n "$_oc_pid" ]] && ps -o command= -p "$_oc_pid" 2>/dev/null | grep -q 'opencode run' && \
+        _kill_tree "$_oc_pid" 2>/dev/null
       sleep 1; kill -9 "$qpid" 2>/dev/null
+      rm -f "$_oc_pid_f"
       break
     fi
   done
@@ -557,6 +575,7 @@ parse_event() {
   G_MEDIA=$(jq -r '
     (.media // []) | map((.kind // "file") + ":" + (.path // "")) | join("\t")
   ' <<<"$line")
+  G_QUOTED_TEXT=$(jq -r '.quoted_text // ""' <<<"$line")
   [[ -z "$G_FROM" ]] && return 1
   return 0
 }
@@ -2339,7 +2358,8 @@ $hits"
           if [[ -z "$name" || "$name" == "add" ]]; then reply_text "$to" "用法：/account add <name>"; return 0; fi
           echo "$name" >> "$ACCOUNTS_FILE"
           reply_text "$to" "✅ 已加入 ${name}。请在终端运行：
-  $PYTHON_BIN $WXLINK_BIN --account $name login
+  $SCRIPT_DIR/.venv-wxlink/bin/python $WXLINK_BIN --account $name login
+（若无该 venv 则用：$PYTHON_BIN $WXLINK_BIN --account $name login）
 然后 $0 重启后就会同时挂上该号。" ;;
         rm)
           if ! is_admin "$G_FROM" && [[ -s "$ADMINS_FILE" ]]; then reply_text "$to" "需要管理员权限。"; return 0; fi
@@ -2972,7 +2992,10 @@ handle_cron() {
             for (i=1;i<=5;i++) expr=(expr ? expr " " : "") f[i];
             # The b64 is the field right before the trailing "# wxcron:..." token.
             for (i=n;i>=1;i--) if (f[i] ~ "^"pre":") { b64=f[i-2]; break; }
-            cmd="printf %s " b64 " | base64 -d 2>/dev/null"; prompt=""; cmd | getline prompt; close(cmd);
+            cmd="printf %s " b64 " | base64 -d 2>/dev/null"; prompt="";
+            while ((cmd | getline line) > 0) { prompt = prompt (prompt ? " " : "") line; }
+            close(cmd);
+            if (length(prompt) > 80) prompt = substr(prompt, 1, 77) "...";
             printf "  [%s] %s  →  %s\n", id, expr, prompt;
           }')"
       fi
@@ -3140,7 +3163,11 @@ cmdq_process_one() {
 }
 
 cmdq_loop() {
-  while true; do
+  # $$ stays the main bot's PID inside this backgrounded subshell. Without the
+  # guard a SIGTERM'd bot leaves this loop running, and the restarted bot spawns
+  # a second one — two consumers racing on the same $CMDQ_DIR queue.
+  local bot_pid=$$
+  while kill -0 "$bot_pid" 2>/dev/null; do
     if [[ -d "$CMDQ_DIR" ]]; then
       for f in "$CMDQ_DIR"/*.json; do
         [[ -e "$f" ]] || continue
@@ -3149,6 +3176,7 @@ cmdq_loop() {
     fi
     sleep 2
   done
+  log "cmdq loop exiting (bot $bot_pid gone)"
 }
 
 ###############################################################################
@@ -3182,7 +3210,7 @@ seen_recent() {
 
 handle_event() {
   local line="$1"
-  local G_PLATFORM G_ID G_FROM G_FROM_NAME G_FROM_OPEN_ID G_CHAT_TYPE G_ACCOUNT_ID G_ACCOUNT_NAME G_TEXT G_MENTIONED G_MEDIA G_REPLY_TO G_MENTION_USER
+  local G_PLATFORM G_ID G_FROM G_FROM_NAME G_FROM_OPEN_ID G_CHAT_TYPE G_ACCOUNT_ID G_ACCOUNT_NAME G_TEXT G_MENTIONED G_MEDIA G_REPLY_TO G_MENTION_USER G_QUOTED_TEXT
   parse_event "$line" || return
   [[ -z "$G_FROM" ]] && return
   if [[ -n "$G_ID" ]] && seen_recent "$G_ID"; then return; fi
@@ -3404,6 +3432,12 @@ handle_event() {
       prompt="（用户发来一段语音，转写如下）：$voice_text"
     fi
   fi
+  # Inject quoted/referenced message context (Lark parent_id)
+  if [[ -n "${G_QUOTED_TEXT:-}" ]]; then
+    prompt="（引用消息）：${G_QUOTED_TEXT}
+
+${prompt}"
+  fi
   if [[ -z "$prompt" && ${#attachments[@]} -gt 0 ]]; then
     case "$(jq -r '.media[0].kind // "file"' <<<"$line")" in
       image) prompt="（用户发来一张图片，没有文字。请看图并简要回应。）" ;;
@@ -3579,6 +3613,7 @@ $hook_out"
 ###############################################################################
 
 cron_fire() {
+  reap_stale_runs
   local to="$1" key="$2" enc="$3"
   local prompt; prompt="$(_unb64 "$enc")"
   local workspace; workspace=$(cwd_resolve_workspace "$key" "$WORK_ROOT/$key")
@@ -3602,8 +3637,43 @@ cron_fire() {
   if [[ "$prompt" == /* ]] && command -v handle_command >/dev/null 2>&1; then
     if handle_command "$to" "$key" "$prompt"; then return; fi
   fi
+  # Session isolation for cron: stash the INTERACTIVE session files so this
+  # cron task runs in a FRESH opencode session (prevents context bleed where
+  # residual context from other tasks - e.g. GitHub Trending - makes the model
+  # proactively re-run them). Files are restored after the run so interactive
+  # chat continuity is preserved; only the cron's throwaway session is dropped.
+  local _stash="$SESS_DIR/$key.cronstash"
+  # Self-heal: recover leftovers from a previously crashed cron run.
+  if [[ -d "$_stash" ]]; then
+    for _f in oc_session started uuid; do
+      if [[ -f "$_stash/$key.$_f" ]]; then
+        mv -f "$_stash/$key.$_f" "$SESS_DIR/" 2>/dev/null || true
+      fi
+    done
+    rm -rf "$_stash"
+  fi
+  mkdir -p "$_stash"
+  for _f in oc_session started uuid; do
+    if [[ -f "$SESS_DIR/$key.$_f" ]]; then
+      mv -f "$SESS_DIR/$key.$_f" "$_stash/" 2>/dev/null || true
+    fi
+  done
+
+  # Scope guardrail: pin this cron run to exactly this one task so the model
+  # never acts on other scheduled tasks from long-term memory/context.
+  prompt+=$'\n\n[范围限定] 本次定时触发只执行上述这一个任务。其他定时任务（GitHub Trending 日报、AI 日报、/pt 摘要、Sequoia-X 选股）由各自独立的定时器单独触发，本次不要执行、不要补发它们的完整产出；若本任务需要引用某数据源作为素材可正常抓取。忽略记忆或上下文里的其他待办。'
+
   local ans
   ans=$(run_with_heartbeat "$to" "$key" "$workspace" "$model" "$prompt")
+
+  # Restore interactive session files (cron's throwaway session is discarded).
+  for _f in oc_session started uuid; do
+    if [[ -f "$_stash/$key.$_f" ]]; then
+      mv -f "$_stash/$key.$_f" "$SESS_DIR/" 2>/dev/null || true
+    fi
+  done
+  rm -rf "$_stash"
+
   [[ -z "$ans" ]] && ans="(定时任务没有产出)"
   reply_text "$to" "$ans"
 }
@@ -3622,7 +3692,9 @@ self_test() {
   done
   [[ -f "$WXLINK_BIN" ]] || { echo "MISSING wxlink: $WXLINK_BIN" >&2; return 1; }
   printf '  %-12s %s\n' "wxlink"  "$WXLINK_BIN"
-  "$PYTHON_BIN" -c 'import wechat_clawbot, sys; print("  wechat_clawbot", wechat_clawbot.__path__[0])'
+  local _wx_py="$SCRIPT_DIR/.venv-wxlink/bin/python"
+  [[ -x "$_wx_py" ]] || _wx_py="$PYTHON_BIN"
+  "$_wx_py" -c 'import wechat_clawbot, sys; print("  wechat_clawbot", wechat_clawbot.__path__[0])'
 
   local k; k=$(chat_key "acct1" "wxid_x@im.wechat")
   echo "chat_key=$k"
@@ -3670,9 +3742,10 @@ Environment:
   PYTHON_BIN=$PYTHON_BIN
 
 One-time setup:
-  pip install --user wechat-clawbot
-  $PYTHON_BIN $WXLINK_BIN login            # scan WeChat QR
-  $0                                       # then run the bot
+  uv venv "$SCRIPT_DIR/.venv-wxlink" --python 3.13
+  uv pip install --python "$SCRIPT_DIR/.venv-wxlink/bin/python" wechat-clawbot
+  $SCRIPT_DIR/.venv-wxlink/bin/python $WXLINK_BIN login   # scan WeChat QR
+  $0                                                       # then run the bot
 
 Run in background:
   nohup $0 > $LOG_DIR/bot.out 2>&1 &
@@ -3698,6 +3771,32 @@ prewarm_qoder() {
     "$QODER_BIN" "${pa[@]}" >/dev/null 2>>"$LOG_DIR/prewarm.err"
     log "qoder prewarm done"
   ) &
+}
+
+reap_stale_runs() {
+  # Kill orphaned `opencode run` agents (PPID 1) belonging to this bot's workspaces.
+  # Safety invariant: a live run always has a bot.sh heartbeat/timeout loop as
+  # ancestor, so PPID==1 ⇒ its protector died ⇒ unprotected ⇒ safe to reap.
+  # (Without this, a health-restart mid-run orphans the child, which then hangs
+  # forever on a stalled LLM stream — observed: cron runs stuck 13-19h.)
+  # Ownership is the process cwd: opencode >=2 dropped `run --dir`, so the
+  # workspace path no longer appears in the command line. lsof reports a resolved
+  # physical path, hence pwd -P here — and an empty $ws would prefix-match every
+  # process, so bail out instead of reaping when WORK_ROOT is missing.
+  local ws pid cwd
+  ws=$(cd "$WORK_ROOT" 2>/dev/null && pwd -P) || return 0
+  [[ -n "$ws" ]] || return 0
+  while read -r pid; do
+    [[ -z "$pid" ]] && continue
+    ps -o command= -p "$pid" 2>/dev/null | grep -q 'opencode run' || continue
+    cwd=$(lsof -a -p "$pid" -d cwd -Fn 2>/dev/null | sed -n 's/^n//p' | head -1)
+    [[ "$cwd" == "$ws"* ]] || continue
+    log "reaping orphaned opencode run pid=$pid cwd=$cwd"
+    kill "$pid" 2>/dev/null
+    sleep 1
+    kill -9 "$pid" 2>/dev/null
+  done < <(ps -axo pid=,ppid=,command= 2>/dev/null | awk '$2==1 && /opencode run/ {print $1}')
+  return 0
 }
 
 reap_stale_subscribers() {
@@ -3772,6 +3871,7 @@ main() {
   #    Feishu long-poll alive). Two subscribers on the same account then split the
   #    server-side event stream → half the messages go to a dead pipe → users see
   #    "slow"/missing replies. Kill any such leftovers BEFORE we spawn fresh ones.
+  reap_stale_runs
   reap_stale_subscribers
   # Best-effort: also kill our own spawned subscribers when this bot.sh exits.
   trap 'reap_own_subscribers' EXIT INT TERM
@@ -3813,7 +3913,13 @@ main() {
     case "$platform" in
       wechat|wx)
         (
-          while true; do
+          # $$ stays the main bot's PID inside this subshell. SIGTERM on the main
+          # bot does not reach a detached loop, and a survivor respawns its
+          # subscriber 3s later — which then collides with the restarted bot on the
+          # single-subscriber-per-app lock. The resulting error storm is what the
+          # health monitor reads as a reconnect storm, so it restarts again: loop.
+          local bot_pid=$$
+          while kill -0 "$bot_pid" 2>/dev/null; do
             wxlink --account "$acct" subscribe --download-dir "$DL_ROOT/wechat-$acct" \
               2>>"$LOG_DIR/wxlink-$acct.err" \
             | while IFS= read -r ev; do
@@ -3822,11 +3928,13 @@ main() {
             log "wxlink subscribe[$acct] exited; restarting in 3s..."
             sleep 3
           done
+          log "wxlink subscribe[$acct] loop exiting (bot $bot_pid gone)"
         ) &
         ;;
       lark|feishu)
         (
-          while true; do
+          local bot_pid=$$   # see wechat branch for why this loop must self-exit
+          while kill -0 "$bot_pid" 2>/dev/null; do
             lark_subscribe_loop "$acct" \
               2>>"$LOG_DIR/lark-$acct.err" \
             | while IFS= read -r ev; do
@@ -3835,6 +3943,7 @@ main() {
             log "lark subscribe[$acct] exited; restarting in 3s..."
             sleep 3
           done
+          log "lark subscribe[$acct] loop exiting (bot $bot_pid gone)"
         ) &
         ;;
       *)

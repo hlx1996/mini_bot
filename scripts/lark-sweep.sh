@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
-BOT="ou_your_open_id_here"
-EVT=~/Projects/mini_bot/state/logs/events.jsonl
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# open_id that should receive the sweep notifications; set it in .env
+BOT="${LARK_SWEEP_BOT:?set LARK_SWEEP_BOT to the recipient open_id (ou_...)}"
+EVT="${BOT_HOME:-$REPO_DIR/state}/logs/events.jsonl"
 
 send() {
   local txt="$1"
