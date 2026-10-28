@@ -239,7 +239,7 @@ _model_select_handle() {
   local n="$text"
   local line; line=$(_model_select_catalog | sed -n "${n}p")
   if [[ -z "$line" ]]; then
-    reply_text "$to" "❌ Out of range (1-16)"
+    reply_text "$to" "❌ Out of range (1-$(_model_select_catalog | grep -c .))"
     return 0
   fi
   local model_id; model_id=$(printf '%s' "$line" | cut -d'|' -f2)
